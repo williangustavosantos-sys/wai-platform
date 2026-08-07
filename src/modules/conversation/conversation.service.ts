@@ -157,19 +157,20 @@ export async function processConversationTurn(
     aiOutput.customMetadata?.bookingDraft as Record<string, any> | undefined
   );
 
-  // 8. Persistir resposta do assistente (Role: 'assistant') com metadados para WAI Inspector
   const processingTimeMs = Date.now() - startTime;
+  const finalMetadata = {
+    intent: aiOutput.detectedIntent,
+    toolCalls: telemetry,
+    processingTimeMs,
+    provider: aiProvider.providerName,
+    ...(aiOutput.customMetadata || {})
+  };
+
   await createMessage(client, adminClient, userId, organizationSlug, {
     conversationId,
     role: 'assistant',
     content: finalReply,
-    metadata: {
-      intent: aiOutput.detectedIntent,
-      toolCalls: telemetry,
-      processingTimeMs,
-      provider: aiProvider.providerName,
-      ...(aiOutput.customMetadata || {})
-    }
+    metadata: finalMetadata
   }, correlationId);
 
   // 9. Enviar resposta através do Canal correspondente
@@ -182,6 +183,7 @@ export async function processConversationTurn(
     detectedIntent: aiOutput.detectedIntent,
     toolCalls: telemetry,
     conversationId,
-    processingTimeMs
+    processingTimeMs,
+    metadata: finalMetadata
   };
 }

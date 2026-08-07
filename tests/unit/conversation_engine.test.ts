@@ -93,6 +93,30 @@ describe('Phase 2 Unit Tests: Conversation Engine & AI Abstraction Layer', () =>
       expect(turnRes.toolCalls).toHaveLength(0);
       expect(turnRes.replyText).toBe('');
     });
+
+    it('deve reconhecer intenções fiscais em linguagem natural (commercialista, tasse, bilancio, etc) e sugerir agendamento', async () => {
+      const phrases = [
+        "Ho bisogno di parlare con un commercialista",
+        "Mi serve aiuto con le tasse",
+        "Devo sistemare il bilancio",
+        "Ho un problema fiscale",
+        "Vorrei parlare con qualcuno per le tasse"
+      ];
+
+      for (const phrase of phrases) {
+        const turnRes = await aiProvider.processTurn(
+          mockConfig,
+          [],
+          phrase,
+          [],
+          'studio-aurora'
+        );
+        expect(turnRes.detectedIntent).toBe('BOOK_APPOINTMENT');
+        const checkCall = turnRes.toolCalls.find((t: any) => t.name === 'checkAvailability');
+        expect(checkCall).toBeDefined();
+        expect(checkCall?.args.serviceId).toBe('AUTO_RESOLVE');
+      }
+    });
   });
 
   describe('SimpleAIProvider - Generazione Risposta Basata sul Esito Database (Guardrail WAI)', () => {
@@ -150,7 +174,7 @@ describe('Phase 2 Unit Tests: Conversation Engine & AI Abstraction Layer', () =>
       );
 
       expect(reply).toContain('[WAI_STEP_SERVICE]');
-      expect(reply).toContain('Quale servizio desideri prenotare?');
+      expect(reply).toContain('Quale servizio ti serve?');
     });
 
     it('TEST 8: deve filtrar estritamente histórico persistido garantindo que somente datas com availableSlots > 0 gerem disponibilidade', () => {

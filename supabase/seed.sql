@@ -13,7 +13,7 @@ ON CONFLICT (user_id) DO UPDATE SET global_role = EXCLUDED.global_role, status =
 -- 3. Populate organizations
 INSERT INTO public.organizations (id, name, slug, timezone, locale, status, settings_json)
 VALUES
-  ('11111111-1111-1111-1111-111111111111', 'Studio Aurora', 'studio-aurora', 'Europe/Rome', 'it-IT', 'active', '{"display_name": "Studio Aurora", "theme_preference": "institutional"}'::jsonb),
+  ('11111111-1111-1111-1111-111111111111', 'Studio Aurora', 'studio-aurora', 'Europe/Rome', 'it-IT', 'active', '{"display_name": "Studio Aurora", "theme_preference": "institutional", "address": "Via dei Mille 10, Milano (MI)", "phone": "+39021234567", "whatsapp": "+393401122333", "working_hours": "Lun-Ven 09:00 - 18:00 (Ven 09:00 - 17:00)"}'::jsonb),
   ('22222222-2222-2222-2222-222222222222', 'Studio Brera', 'studio-brera', 'Europe/Rome', 'it-IT', 'active', '{"display_name": "Studio Brera", "theme_preference": "balanced"}'::jsonb)
 ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, settings_json = EXCLUDED.settings_json;
 
@@ -64,6 +64,11 @@ VALUES
   ('11111111-1111-1111-1111-111111111111', 'b1111111-1111-1111-1111-111111111111', 3, '09:00', '18:00', true),
   ('11111111-1111-1111-1111-111111111111', 'b1111111-1111-1111-1111-111111111111', 4, '09:00', '18:00', true),
   ('11111111-1111-1111-1111-111111111111', 'b1111111-1111-1111-1111-111111111111', 5, '09:00', '17:00', true),
+  ('11111111-1111-1111-1111-111111111111', 'b2222222-1111-1111-1111-111111111111', 1, '09:00', '18:00', true),
+  ('11111111-1111-1111-1111-111111111111', 'b2222222-1111-1111-1111-111111111111', 2, '09:00', '18:00', true),
+  ('11111111-1111-1111-1111-111111111111', 'b2222222-1111-1111-1111-111111111111', 3, '09:00', '18:00', true),
+  ('11111111-1111-1111-1111-111111111111', 'b2222222-1111-1111-1111-111111111111', 4, '09:00', '18:00', true),
+  ('11111111-1111-1111-1111-111111111111', 'b2222222-1111-1111-1111-111111111111', 5, '09:00', '17:00', true),
   ('22222222-2222-2222-2222-222222222222', 'b3333333-2222-2222-2222-222222222222', 1, '10:00', '19:00', true),
   ('22222222-2222-2222-2222-222222222222', 'b3333333-2222-2222-2222-222222222222', 3, '10:00', '19:00', true)
 ON CONFLICT DO NOTHING;
@@ -94,3 +99,14 @@ VALUES
   ('a1111111-1111-4111-8111-111111111111', '11111111-1111-1111-1111-111111111111', 'c1111111-1111-1111-1111-111111111111', 'customer', 'Ciao, vorrei informazioni sulle disponibilità.', '{"intent": "CHECK_AVAILABILITY"}'::jsonb),
   ('a2222222-2222-4222-8222-222222222222', '11111111-1111-1111-1111-111111111111', 'c1111111-1111-1111-1111-111111111111', 'assistant', 'Ciao Giovanni! Sono Sofia dello Studio Aurora. Ti aiuto volentieri a trovare il momento migliore.', '{"intent": "CHECK_AVAILABILITY", "toolsCalled": ["findCustomer", "checkAvailability"]}'::jsonb)
 ON CONFLICT DO NOTHING;
+
+-- 13. Phase 1 Test Appointments: Occupied Slots & Conflicts
+INSERT INTO public.appointments (id, organization_id, customer_id, professional_id, service_id, start_at, end_at, status, created_by_actor_type, notes)
+VALUES
+  -- Dott. Marco Rossi on Monday, Aug 10, 2026: 09:00 - 09:45 (Consulenza Fiscale Iniziale)
+  ('f1111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'd1111111-1111-1111-1111-111111111111', 'b1111111-1111-1111-1111-111111111111', 'c1111111-1111-1111-1111-111111111111', '2026-08-10T09:00:00+02:00', '2026-08-10T09:45:00+02:00', 'confirmed', 'user', 'Consulenza di test per verificare orario occupato'),
+  -- Dott. Marco Rossi on Monday, Aug 10, 2026: 10:00 - 11:00 (Revisione Bilancio Annuale)
+  ('f2222222-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'd2222222-1111-1111-1111-111111111111', 'b1111111-1111-1111-1111-111111111111', 'c2222222-1111-1111-1111-111111111111', '2026-08-10T10:00:00+02:00', '2026-08-10T11:00:00+02:00', 'confirmed', 'user', 'Revisione contabile di test'),
+  -- Dott. Marco Rossi on Tuesday, Aug 11, 2026: 14:00 - 14:45 (Consulenza Fiscale Iniziale) - to verify overlap / buffer conflicts
+  ('f3333333-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'd1111111-1111-1111-1111-111111111111', 'b1111111-1111-1111-1111-111111111111', 'c1111111-1111-1111-1111-111111111111', '2026-08-11T14:00:00+02:00', '2026-08-11T14:45:00+02:00', 'confirmed', 'user', 'Appuntamento per verificare i buffer di conflitto')
+ON CONFLICT (id) DO NOTHING;

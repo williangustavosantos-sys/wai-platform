@@ -411,7 +411,7 @@ export async function executeToolByName(
         return { success: false, error: 'Customer not found' };
       case 'createCustomer':
         const created = await crmCreateCustomer(client, adminClient, userId, organizationSlug, args, 'tool-call');
-        return { success: true, result: { customer: created } };
+        return { success: true, result: { customer: created.data } };
       case 'createAppointment':
         return await calendarCreateAppointment(client, adminClient, userId, organizationSlug, args, 'tool-call');
       case 'cancelAppointment':

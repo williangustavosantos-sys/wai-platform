@@ -22,6 +22,7 @@ export interface ConversationTurnResult {
   toolCalls: ToolCallTelemetry[];
   conversationId: string;
   processingTimeMs: number;
+  metadata?: Record<string, any>;
 }
 
 export interface ChannelAdapter {

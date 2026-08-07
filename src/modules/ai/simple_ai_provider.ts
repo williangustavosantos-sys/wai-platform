@@ -177,7 +177,13 @@ export class SimpleAIProvider implements AIProvider {
     }
 
     // Intent detection
-    if (textLower.includes('prenotare') || textLower.includes('visita') || textLower.includes('appuntamento') || textLower.includes('fissare') || textLower.includes('disponibil') || textLower.includes('orari')) {
+    const bookingKeywords = [
+      'prenotare', 'visita', 'appuntamento', 'fissare', 'disponibil', 'orari',
+      'commercialista', 'aiuto fiscale', 'tasse', 'bilancio', 'problema fiscale', 'fiscale'
+    ];
+    const hasBookingIntent = bookingKeywords.some(kw => textLower.includes(kw));
+
+    if (hasBookingIntent) {
       bookingDraft = { ...bookingDraft, step: 'CHECKING', serviceId: 'AUTO_RESOLVE', searchOffsetDays: 0 };
       const startDate = getDateInTimezone(0);
       const endDate = getDateInTimezone(30);
@@ -212,6 +218,21 @@ export class SimpleAIProvider implements AIProvider {
     const assistantName = config?.name || 'Chiara';
     const studioName = organizationSlug === 'studio-aurora' ? 'Studio Aurora' : 'Studio Brera';
     
+    // Resolve serviceId and serviceName from checkAvailability results if present
+    if (bookingDraft) {
+      const availResult = toolResults.find(t => (t.toolName || (t as any).name) === 'checkAvailability');
+      if (availResult?.success && availResult.result) {
+        const resObj = availResult.result as any;
+        if (resObj.service) {
+          bookingDraft.serviceId = resObj.service.id;
+          bookingDraft.serviceName = resObj.service.name;
+        } else if (resObj.days && resObj.days.length > 0 && resObj.days[0].service) {
+          bookingDraft.serviceId = resObj.days[0].service.id;
+          bookingDraft.serviceName = resObj.days[0].service.name;
+        }
+      }
+    }
+    
     if (intent === 'HUMAN_HANDOFF') {
       return `Ho inviato la segnalazione al personale di ${studioName}. Un operatore ti risponderà appena disponibile.`;
     }
@@ -220,7 +241,7 @@ export class SimpleAIProvider implements AIProvider {
     }
 
     if (draftReply?.includes('[WAI_STEP_SERVICE_CHECK]') || draftReply?.includes('[WAI_STEP_SERVICE]')) {
-       return `[WAI_STEP_SERVICE]\nQuale servizio desideri prenotare?`;
+       return `[WAI_STEP_SERVICE]\nQuale servizio ti serve?`;
     }
 
     if (draftReply?.includes('[WAI_STEP_SLOTS]')) {
@@ -229,7 +250,7 @@ export class SimpleAIProvider implements AIProvider {
            return `[WAI_STEP_PROFESSIONAL]\nPreferisci un professionista specifico o il primo disponibile?`;
        }
        if ((availResult?.result as any)?.requiresServiceSelection) {
-           return `[WAI_STEP_SERVICE]\nQuale servizio desideri prenotare?`;
+           return `[WAI_STEP_SERVICE]\nQuale servizio ti serve?`;
        }
        
        if ((availResult?.result as any)?.days && ((availResult?.result as any).days as any[]).length > 0) {
@@ -253,10 +274,17 @@ export class SimpleAIProvider implements AIProvider {
        const appResult = toolResults.find(t => (t.toolName || (t as any).name) === 'createAppointment');
        if (appResult?.success) {
          const resObj = appResult.result as any;
-         const dtStr = resObj?.appointment?.startAt || resObj?.scheduledAt || '';
-         let dateF = dtStr.slice(0, 10);
-         let timeF = dtStr.includes('T') ? dtStr.slice(11, 16) : '10:00';
-         return `[WAI_STEP_CONFIRM]\nPrenotazione confermata per il ${dateF} alle ore ${timeF}. A presto!`;
+         const dtStr = resObj?.data?.startAt || resObj?.appointment?.startAt || resObj?.scheduledAt || (bookingDraft?.date && bookingDraft.time ? `${bookingDraft.date}T${bookingDraft.time}:00` : '');
+         let msg = '';
+         if (dtStr) {
+           const dt = new Date(dtStr);
+           if (!isNaN(dt.getTime())) {
+             const dateF = dt.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Rome' });
+             const timeF = dt.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Rome' });
+             msg = `[WAI_STEP_CONFIRM]\nPrenotazione confermata per ${dateF} alle ore ${timeF}. A presto!`;
+           }
+         }
+         return msg || `[WAI_STEP_CONFIRM]\nPrenotazione confermata. A presto!`;
        } else if (appResult?.isGistOverlapError) {
          return `[WAI_STEP_SLOTS_EMPTY]\nMi dispiace, questo orario non è più disponibile. Scegli un altro orario.`;
        }

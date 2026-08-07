@@ -147,7 +147,7 @@ export default function ChatSimulatorView({ organizationSlug }: ChatSimulatorVie
       conversationId: turnRes.conversationId,
       role: 'assistant',
       content: turnRes.replyText,
-      metadata: { intent: turnRes.detectedIntent, toolCalls: turnRes.toolCalls },
+      metadata: turnRes.metadata || { intent: turnRes.detectedIntent, toolCalls: turnRes.toolCalls },
       createdAt: new Date().toISOString()
     };
 
