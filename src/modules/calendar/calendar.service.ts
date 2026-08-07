@@ -29,6 +29,7 @@ export async function listServices(client: SupabaseClient, userId: string, organ
     name: row.name,
     description: row.description || null,
     durationMinutes: row.duration_minutes,
+    bufferAfterMinutes: row.buffer_after_minutes || 0,
     price: row.price !== null ? Number(row.price) : null,
     status: row.status,
     createdAt: row.created_at,
@@ -70,6 +71,7 @@ export async function createService(
     data: {
       id: created.id, organizationId: created.organization_id, name: created.name,
       description: created.description, durationMinutes: created.duration_minutes,
+      bufferAfterMinutes: created.buffer_after_minutes || 0,
       price: created.price, status: created.status, createdAt: created.created_at,
     }
   };
@@ -115,7 +117,11 @@ export async function createProfessional(
 
   let phone: string | null = null;
   if (input.phone) {
-    try { phone = normalizePhoneNumber(input.phone); } catch (err: unknown) { return { success: false, error: (err as Error).message }; }
+    const res = normalizePhoneNumber(input.phone);
+    if (!res.valid || !res.normalized) {
+      return { success: false, error: res.reason || 'Numero di telefono del professionista non valido.' };
+    }
+    phone = res.normalized;
   }
 
   const insertPayload = {
@@ -153,7 +159,7 @@ export async function listTimeSlots(client: SupabaseClient, userId: string, orga
   if (!access) return [];
 
   let query = client
-    .from('available_time_slots')
+    .from('availability_rules')
     .select('*')
     .eq('organization_id', access.organizationId)
     .eq('is_active', true)
@@ -196,12 +202,12 @@ export async function createTimeSlot(
     is_active: true,
   };
 
-  const { data: created, error } = await client.from('available_time_slots').insert([insertPayload]).select('*').single();
+  const { data: created, error } = await client.from('availability_rules').insert([insertPayload]).select('*').single();
   if (error || !created) return { success: false, error: `Impossibile salvare la fascia oraria: ${error?.message}` };
 
   await recordAuditLog({
     organizationId: access.organizationId, actorUserId: userId, actorType: 'user',
-    action: 'CREATE_TIME_SLOT', entityType: 'available_time_slot', entityId: created.id,
+    action: 'CREATE_TIME_SLOT', entityType: 'availability_rule', entityId: created.id,
     afterData: { ...insertPayload }, correlationId,
   }, adminClient);
 

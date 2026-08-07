@@ -2,35 +2,41 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { recordAuditLog } from '@/modules/audit/audit.service';
 import { Logger } from '@/logging/logger';
 import { verifyOrganizationAccess } from '@/security/auth';
-import { Customer, CreateCustomerInput, UpdateCustomerInput, CustomerStatus } from './crm.types';
+import { Customer, CreateCustomerInput, UpdateCustomerInput, CustomerStatus, NormalizedPhoneResult } from './crm.types';
 
 /**
  * Normalizes and validates phone number to international E.164 specification.
- * In Phase 1 Pilot (Italy default), assumes Italian country code (+39) if omitted on mobile numbers.
+ * Never alters original digits; only strips formatting characters and prepends country code when missing.
  */
-export function normalizePhoneNumber(rawPhone: string): string {
-  const cleaned = rawPhone.replace(/\s+/g, '').replace(/-/g, '').replace(/\(/g, '').replace(/\)/g, '');
+export function normalizePhoneNumber(rawPhone: string, defaultCountryCode = '+39'): NormalizedPhoneResult {
+  if (!rawPhone || typeof rawPhone !== 'string') {
+    return { valid: false, normalized: null, countryCode: null, reason: 'Il numero di telefono è obbligatorio.' };
+  }
+
+  const cleaned = rawPhone.replace(/[\s\-\.\/\(\)]/g, '');
   if (!cleaned) {
-    throw new Error('Il numero di telefono è obbligatorio.');
+    return { valid: false, normalized: null, countryCode: null, reason: 'Il numero di telefono è vuoto.' };
   }
 
   let phone = cleaned;
-  if (!phone.startsWith('+') && !phone.startsWith('00')) {
-    if (phone.startsWith('3') && phone.length >= 9) {
-      phone = '+39' + phone;
-    } else {
-      phone = '+' + phone;
-    }
-  } else if (phone.startsWith('00')) {
+  if (phone.startsWith('00')) {
     phone = '+' + phone.slice(2);
+  } else if (!phone.startsWith('+')) {
+    const cc = defaultCountryCode.startsWith('+') ? defaultCountryCode : `+${defaultCountryCode}`;
+    phone = cc + phone;
   }
 
   const e164Regex = /^\+[1-9]\d{6,14}$/;
   if (!e164Regex.test(phone)) {
-    throw new Error(`Formato telefono non valido per lo standard E.164: (${rawPhone}). Inserire un numero valido es. +39 340 1234567.`);
+    return {
+      valid: false,
+      normalized: null,
+      countryCode: null,
+      reason: `Formato telefono non valido per lo standard E.164: (${rawPhone}).`
+    };
   }
 
-  return phone;
+  return { valid: true, normalized: phone, countryCode: defaultCountryCode };
 }
 
 function mapDbToCustomer(row: Record<string, unknown>): Customer {
@@ -108,11 +114,18 @@ export async function createCustomer(
     return { success: false, error: 'Operazione consentita solo a operatori o proprietari.' };
   }
 
-  let normalizedPhone: string;
-  try {
-    normalizedPhone = normalizePhoneNumber(input.phone);
-  } catch (err: unknown) {
-    return { success: false, error: (err as Error).message };
+  const phoneRes = normalizePhoneNumber(input.phone);
+  if (!phoneRes.valid || !phoneRes.normalized) {
+    return { success: false, error: phoneRes.reason || 'Il numero di telefono inserito non è valido.' };
+  }
+  const normalizedPhone = phoneRes.normalized;
+
+  // Deduplicação preventiva: verifica se já existe cliente cadastrado no tenant
+  const existingCustomers = await listCustomers(client, userId, organizationSlug, normalizedPhone, log);
+  const foundExisting = existingCustomers.find(c => c.phoneNormalized === normalizedPhone);
+  if (foundExisting) {
+    log.info('Existing customer reused by normalized phone match', { customerId: foundExisting.id, phone: normalizedPhone });
+    return { success: true, data: foundExisting };
   }
 
   const insertRecord = {
@@ -136,6 +149,11 @@ export async function createCustomer(
   if (createError || !created) {
     log.error('Error inserting CRM customer', { error: createError });
     if (createError?.code === '23505') {
+      const retryList = await listCustomers(client, userId, organizationSlug, normalizedPhone, log);
+      const retryFound = retryList.find(c => c.phoneNormalized === normalizedPhone);
+      if (retryFound) {
+        return { success: true, data: retryFound };
+      }
       return { success: false, error: `Esiste già un cliente registrato con il numero di telefono ${normalizedPhone} in questa organizzazione.` };
     }
     return { success: false, error: `Impossibile registrare il cliente: ${createError?.message || 'Errore DB'}` };
@@ -209,11 +227,11 @@ export async function updateCustomer(
   if (input.firstName !== undefined) updatePayload.first_name = input.firstName.trim();
   if (input.lastName !== undefined) updatePayload.last_name = input.lastName.trim();
   if (input.phone !== undefined) {
-    try {
-      updatePayload.phone_normalized = normalizePhoneNumber(input.phone);
-    } catch (err: unknown) {
-      return { success: false, error: (err as Error).message };
+    const phoneRes = normalizePhoneNumber(input.phone);
+    if (!phoneRes.valid || !phoneRes.normalized) {
+      return { success: false, error: phoneRes.reason || 'Numero di telefono non valido.' };
     }
+    updatePayload.phone_normalized = phoneRes.normalized;
   }
   if (input.email !== undefined) updatePayload.email = input.email ? input.email.trim() : null;
   if (input.birthDate !== undefined) updatePayload.birth_date = input.birthDate || null;

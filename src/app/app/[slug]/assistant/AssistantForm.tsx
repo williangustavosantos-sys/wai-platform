@@ -8,15 +8,24 @@ interface Props {
   organizationSlug: string;
   initialConfig: DigitalEmployeeConfig;
   readOnly?: boolean;
+  dict?: {
+    form_name_label?: string;
+    form_lang_label?: string;
+    form_tone_label?: string;
+    form_persona_label?: string;
+    submit_btn?: string;
+    saving_btn?: string;
+  };
 }
 
-export function AssistantForm({ organizationSlug, initialConfig, readOnly = false }: Props) {
+export function AssistantForm({ organizationSlug, initialConfig, readOnly = false, dict }: Props) {
   const [status, setStatus] = useState<{ error?: string; success?: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const [name, setName] = useState(initialConfig.name);
   const [tone, setTone] = useState<CommunicationTone>(initialConfig.communicationTone);
   const [personality, setPersonality] = useState(initialConfig.personalitySummary);
+  const [language, setLanguage] = useState(initialConfig.language || 'it-IT');
   const [avatar, setAvatar] = useState(initialConfig.avatarPlaceholderUrl);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -37,9 +46,9 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
 
   const getToneLabel = (t: CommunicationTone) => {
     switch (t) {
-      case 'formal': return 'Formale e Istituzionale';
-      case 'cordial_empathic': return 'Cordiale ed Empatico';
-      case 'direct': return 'Diretto e Sintetico';
+      case 'formal': return 'Formal / Istituzionale';
+      case 'cordial_empathic': return 'Cordiale / Empatico';
+      case 'direct': return 'Direto / Sintetico';
     }
   };
 
@@ -47,7 +56,7 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', alignItems: 'start' }}>
       {/* Visual Preview Card */}
       <div className="wai-card" style={{ padding: '1.5rem', border: '1px solid var(--border-color)', borderRadius: '8px', background: 'rgba(255,255,255,0.02)' }}>
-        <h3 style={{ marginTop: 0, marginBottom: '1rem', color: '#60A5FA' }}>Anteprima Collaboratore Digitale</h3>
+        <h3 style={{ marginTop: 0, marginBottom: '1rem', color: '#60A5FA' }}>Preview / Anteprima (Digital Employee)</h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
           <div style={{
             width: '64px', height: '64px', borderRadius: '50%',
@@ -59,32 +68,32 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
           </div>
           <div>
             <h4 style={{ margin: 0, fontSize: '1.25rem', color: '#E2E8F0' }}>{name || 'Assistente WAI'}</h4>
-            <span style={{ fontSize: '0.85rem', color: '#94A3B8', display: 'block' }}>Lingua Operativa: Italiano ({initialConfig.language})</span>
+            <span style={{ fontSize: '0.85rem', color: '#94A3B8', display: 'block' }}>Lingua / Idioma IA: <strong>{language}</strong></span>
             <span style={{ 
               display: 'inline-block', marginTop: '0.25rem', padding: '0.2rem 0.5rem', 
               background: 'rgba(59, 130, 246, 0.2)', color: '#93C5FD', borderRadius: '4px', fontSize: '0.75rem' 
             }}>
-              Tono: {getToneLabel(tone)}
+              Tone: {getToneLabel(tone)}
             </span>
           </div>
         </div>
         <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem' }}>
           <strong style={{ fontSize: '0.85rem', color: '#CBD5E1', textTransform: 'uppercase', display: 'block', marginBottom: '0.5rem' }}>
-            Personalità e Comportamento
+            Personalità / Trata Comportamentais
           </strong>
           <p style={{ margin: 0, fontSize: '0.95rem', color: '#94A3B8', lineHeight: '1.5', minHeight: '60px' }}>
-            {personality || 'Nessuna descrizione specificata per la personalità operativa.'}
+            {personality || 'Nenhuma descrição de personalidade e comportamento.'}
           </p>
         </div>
         <div style={{ marginTop: '1rem', fontSize: '0.75rem', color: '#64748B', display: 'flex', justifyContent: 'space-between' }}>
           <span>Avatar: {avatar}</span>
-          <span>Stato: {initialConfig.status === 'active' ? '🟢 Attivo' : '⚪ Disattivato'}</span>
+          <span>Status: {initialConfig.status === 'active' ? '🟢 Active' : '⚪ Inactive'}</span>
         </div>
       </div>
 
       {/* Configuration Form */}
       <div className="wai-card" style={{ padding: '1.5rem', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
-        <h3 style={{ marginTop: 0, marginBottom: '1.25rem' }}>Impostazioni Operative (Fase 1)</h3>
+        <h3 style={{ marginTop: 0, marginBottom: '1.25rem' }}>Parâmetros do Assistente IA (Fase 1)</h3>
         <form onSubmit={handleSubmit}>
           {status?.error && (
             <div className="wai-alert wai-alert-error" style={{ marginBottom: '1rem' }}>
@@ -98,7 +107,7 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
           )}
 
           <div className="wai-form-group">
-            <label className="wai-label" htmlFor="name">Nome del Collaboratore Digitale</label>
+            <label className="wai-label" htmlFor="name">{dict?.form_name_label || 'Nome do Assistente IA'}</label>
             <input
               id="name"
               name="name"
@@ -106,14 +115,14 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
               className="wai-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="es. Chiara, Marco, Giulia..."
+              placeholder="ex: Chiara, Marco..."
               required
               disabled={readOnly || isPending}
             />
           </div>
 
           <div className="wai-form-group">
-            <label className="wai-label" htmlFor="communicationTone">Tono di Comunicazione</label>
+            <label className="wai-label" htmlFor="communicationTone">{dict?.form_tone_label || 'Tono di Comunicazione'}</label>
             <select
               id="communicationTone"
               name="communicationTone"
@@ -122,14 +131,14 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
               onChange={(e) => setTone(e.target.value as CommunicationTone)}
               disabled={readOnly || isPending}
             >
-              <option value="cordial_empathic">Cordiale ed Empatico (Consigliato)</option>
-              <option value="formal">Formale e Istituzionale</option>
-              <option value="direct">Diretto e Sintetico</option>
+              <option value="cordial_empathic">Cordiale ed Empatico / Cordial (Consigliato)</option>
+              <option value="formal">Formale / Istituzionale</option>
+              <option value="direct">Diretto e Sintetico / Direto</option>
             </select>
           </div>
 
           <div className="wai-form-group">
-            <label className="wai-label" htmlFor="personalitySummary">Personalità e Tratti Comportamentali</label>
+            <label className="wai-label" htmlFor="personalitySummary">{dict?.form_persona_label || 'Personalidade e Instruções de Sistema'}</label>
             <textarea
               id="personalitySummary"
               name="personalitySummary"
@@ -137,27 +146,30 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
               style={{ minHeight: '100px', resize: 'vertical' }}
               value={personality}
               onChange={(e) => setPersonality(e.target.value)}
-              placeholder="Descrizione del carattere, livello di formalità, pazienza ed energia comunicativa..."
+              placeholder="Instruções e comportamento..."
               required
               disabled={readOnly || isPending}
             />
           </div>
 
           <div className="wai-form-group">
-            <label className="wai-label" htmlFor="language">Lingua Principale</label>
-            <input
+            <label className="wai-label" htmlFor="language">{dict?.form_lang_label || 'Idioma de Comunicação IA (Modelo Lógico)'}</label>
+            <select
               id="language"
               name="language"
-              type="text"
-              className="wai-input"
-              defaultValue={initialConfig.language || 'it-IT'}
-              readOnly
-              title="Nel pilota iniziale la lingua è vincolata a Italiano (it-IT)"
-            />
+              className="wai-select"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              disabled={readOnly || isPending}
+            >
+              <option value="it-IT">🇮🇹 Italiano (Italia - Padrão Chiara Studio Aurora)</option>
+              <option value="pt-BR">🇧🇷 Português (Brasil)</option>
+              <option value="en-US">🇺🇸 English (US) - Suporte Futuro</option>
+            </select>
           </div>
 
           <div className="wai-form-group">
-            <label className="wai-label" htmlFor="avatarPlaceholderUrl">Avatar Placeholder (ID / URL)</label>
+            <label className="wai-label" htmlFor="avatarPlaceholderUrl">Avatar (ID / URL Placeholder)</label>
             <input
               id="avatarPlaceholderUrl"
               name="avatarPlaceholderUrl"
@@ -165,7 +177,7 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
               className="wai-input"
               value={avatar}
               onChange={(e) => setAvatar(e.target.value)}
-              placeholder="es. /avatars/chiara.svg"
+              placeholder="ex: /avatars/chiara.svg"
               required
               disabled={readOnly || isPending}
             />
@@ -178,7 +190,7 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
               style={{ width: '100%', marginTop: '0.5rem' }}
               disabled={isPending}
             >
-              {isPending ? 'Salvataggio in corso...' : 'Aggiorna Configurazione Assistente'}
+              {isPending ? (dict?.saving_btn || 'Salvando...') : (dict?.submit_btn || 'Salvar Configuração IA')}
             </button>
           )}
           {readOnly && (

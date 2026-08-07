@@ -6,18 +6,27 @@ import { usePathname } from 'next/navigation';
 
 interface Props {
   organizationSlug: string;
+  labels: {
+    overview: string;
+    assistant: string;
+    chat: string;
+    crm: string;
+    calendar: string;
+    rules: string;
+  };
 }
 
-export function TenantNavTabs({ organizationSlug }: Props) {
+export function TenantNavTabs({ organizationSlug, labels }: Props) {
   const pathname = usePathname();
   const basePath = `/app/${organizationSlug}`;
 
   const tabs = [
-    { name: 'Panoramica', href: basePath, exact: true },
-    { name: '🤖 Collaboratore Digitale', href: `${basePath}/assistant`, exact: false },
-    { name: '👥 Clienti (CRM)', href: `${basePath}/crm`, exact: false },
-    { name: '📅 Motore Agenda', href: `${basePath}/calendar`, exact: false },
-    { name: '⚙️ Regole & Politiche', href: `${basePath}/rules`, exact: false },
+    { name: labels.overview, href: basePath, exact: true },
+    { name: `🤖 ${labels.assistant}`, href: `${basePath}/assistant`, exact: true },
+    { name: `💬 ${labels.chat}`, href: `${basePath}/assistant/chat`, exact: true },
+    { name: `👥 ${labels.crm}`, href: `${basePath}/crm`, exact: false },
+    { name: `📅 ${labels.calendar}`, href: `${basePath}/calendar`, exact: false },
+    { name: `⚙️ ${labels.rules}`, href: `${basePath}/rules`, exact: false },
   ];
 
   return (

@@ -5,6 +5,8 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { logoutAction } from '@/app/login/actions';
 import { TenantNavTabs } from './TenantNavTabs';
+import { LanguageSelector } from '@/components/LanguageSelector';
+import { getAdminLanguage, getDictionary } from '@/i18n';
 
 interface Props {
   children: ReactNode;
@@ -15,6 +17,8 @@ export default async function TenantLayout({ children, params }: Props) {
   const { slug } = await params;
   const supabase = await createServerClient();
   const session = await getCurrentSession(supabase);
+  const adminLang = await getAdminLanguage();
+  const dict = getDictionary(adminLang);
 
   if (!session) {
     redirect('/login');
@@ -45,7 +49,7 @@ export default async function TenantLayout({ children, params }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.2rem' }}>
           <Link href={`/app/${slug}`} style={{ textDecoration: 'none' }}>
             <span className="wai-logo" style={{ background: 'linear-gradient(90deg, #3B82F6, #60A5FA)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', fontWeight: 800, fontSize: '1.3rem', letterSpacing: '-0.5px' }}>
-              WAI PLATFORM
+              {dict.nav.platform}
             </span>
           </Link>
           <span style={{ color: 'var(--text-muted)' }}>/</span>
@@ -56,16 +60,17 @@ export default async function TenantLayout({ children, params }: Props) {
             {access.role.replace('organization_', '').toUpperCase()}
           </span>
           <span style={{ fontSize: '0.88rem', color: 'var(--text-muted)' }}>{session.email}</span>
+          <LanguageSelector currentLang={adminLang} />
           <form action={logoutAction}>
             <button type="submit" className="wai-button wai-button-secondary" style={{ padding: '0.4rem 0.9rem', fontSize: '0.85rem' }}>
-              Esci
+              {dict.nav.logout}
             </button>
           </form>
         </div>
       </nav>
 
       {/* Secondary Tenant Navigation Tabs */}
-      <TenantNavTabs organizationSlug={slug} />
+      <TenantNavTabs organizationSlug={slug} labels={dict.nav.tabs} />
 
       {/* Workspace Body */}
       <main className="wai-container" style={{ flex: 1, paddingBottom: '4rem' }}>

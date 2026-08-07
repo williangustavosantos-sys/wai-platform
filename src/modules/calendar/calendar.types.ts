@@ -8,6 +8,7 @@ export interface Service {
   name: string;
   description: string | null;
   durationMinutes: number;
+  bufferAfterMinutes: number;
   price: number | null;
   status: ServiceStatus;
   createdAt: string;

@@ -5,6 +5,7 @@ import { getAssistantConfig } from '@/modules/assistant/assistant.service';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { AssistantForm } from './AssistantForm';
+import { getAdminLanguage, getDictionary } from '@/i18n';
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -14,6 +15,8 @@ export default async function AssistantPage({ params }: Props) {
   const { slug } = await params;
   const supabase = await createServerClient();
   const session = await getCurrentSession(supabase);
+  const adminLang = await getAdminLanguage();
+  const dict = getDictionary(adminLang);
 
   if (!session) {
     redirect('/login');
@@ -55,18 +58,18 @@ export default async function AssistantPage({ params }: Props) {
       <div style={{ marginBottom: '2rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h1 className="wai-title">Collaboratore Digitale WAI</h1>
+            <h1 className="wai-title">{dict.assistant.title}</h1>
             <p className="wai-subtitle">
-              Configura l&apos;identità, il tono comunicativo e la personalità del tuo assistente prima di connettere i canali di automazione.
+              {dict.assistant.subtitle}
             </p>
           </div>
           <span className="wai-badge" style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#60A5FA', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
-            Módulo Operativo (Fase 1)
+            Módule / Config (Fase 1)
           </span>
         </div>
       </div>
 
-      <AssistantForm organizationSlug={slug} initialConfig={config} readOnly={readOnly} />
+      <AssistantForm organizationSlug={slug} initialConfig={config} readOnly={readOnly} dict={dict.assistant} />
     </div>
   );
 }

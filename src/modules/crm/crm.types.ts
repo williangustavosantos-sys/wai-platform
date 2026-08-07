@@ -1,3 +1,10 @@
+export interface NormalizedPhoneResult {
+  valid: boolean;
+  normalized: string | null;
+  countryCode: string | null;
+  reason?: string;
+}
+
 export type CustomerStatus = 'active' | 'archived' | 'blocked';
 
 export interface Customer {

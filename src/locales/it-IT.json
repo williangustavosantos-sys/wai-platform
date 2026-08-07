@@ -1,0 +1,92 @@
+{
+  "nav": {
+    "platform": "WAI PLATFORM",
+    "logout": "Esci",
+    "tabs": {
+      "overview": "Pagina Principale (Dashboard)",
+      "assistant": "1. Collaboratore Digitale",
+      "crm": "2. CRM Clientela",
+      "calendar": "3. Motore di Agenda WAI",
+      "rules": "4. Regole & Politiche",
+      "chat": "5. Simulatore WAI"
+    }
+  },
+  "dashboard": {
+    "subtitle": "Ambiente Operativo Primario (Fase 1) | Isolato in sicurezza su database multi-tenant (RLS) e tracciato da Audit Log immutabile.",
+    "modules_title": "Moduli del Nucleo Operativo WAI",
+    "access_module": "Accedi al modulo",
+    "modules": {
+      "assistant_title": "1. Collaboratore Digitale",
+      "assistant_desc": "Configurazione nome (es. Chiara), personalità, tono di comunicazione ed avatar WAI.",
+      "crm_title": "2. CRM Clientela",
+      "crm_desc": "Anagrafica clienti con convalida telematica standard E.164 e registro dei consensi marketing.",
+      "calendar_title": "3. Motore di Agenda WAI",
+      "calendar_desc": "Catalogo servizi, orari professionisti e prenotazioni con blocco meccanico anti-sovrapposizione.",
+      "rules_title": "4. Regole & Politiche (Rules Engine)",
+      "rules_desc": "Gestione preavvisi di cancellazione, chiusure straordinarie e modelli di messaggistica standard."
+    },
+    "tenant_params": {
+      "title": "Parametri Organizzazione (Tenant RLS)",
+      "slug_label": "Identificativo Slug:",
+      "timezone_label": "Fuso Orario:",
+      "locale_label": "Lingua Interna (Clienti):",
+      "access_level_label": "Livello Accesso Utente:",
+      "integrations_title": "Integrazioni di Fase Successiva",
+      "integrations_desc": "Le interfacce esterne (WhatsApp API, widget web, chiamate vocali) e il motore IA di dialogo concettuale verranno connessi in sicurezza sopra questo nucleo operativo relazionale durante le fasi successive."
+    },
+    "settings_card": {
+      "title": "Impostazioni Base & Registro Audizione",
+      "desc": "Modifica il nome visualizzato o la lingua dell'azienda per verificare la tracciabilità del sistema di audizione (Audit Log), che conserva storicamente lo stato precedente e successivo."
+    }
+  },
+  "settings_form": {
+    "display_name_label": "Nome Visualizzato (Display Name)",
+    "display_name_placeholder": "es. Studio Aurora Commercialisti",
+    "org_language_label": "Lingua Predefinita Organizzazione (Clientela)",
+    "theme_label": "Tema Interfaccia (Preferenza)",
+    "theme_institutional": "Istituzionale Scuro (Default)",
+    "theme_balanced": "Bilanciato Moderno",
+    "theme_cool": "Blu Tecnico",
+    "submit_btn": "Salva Modifiche (Genera Audit Log)",
+    "saving_btn": "Registrazione e salvataggio...",
+    "success_msg": "Impostazioni aggiornate con successo e registrate nel registro di audizione (Audit Log)."
+  },
+  "assistant": {
+    "title": "Collaboratore Digitale WAI",
+    "subtitle": "Configura l'identità, il tono comunicativo e la personalità del tuo assistente prima di connettere i canali di automazione.",
+    "form_name_label": "Nome del Collaboratore Digitale",
+    "form_lang_label": "Lingua Principale (Modello IA)",
+    "form_tone_label": "Tono di Comunicazione",
+    "form_persona_label": "Personalità e Tratti Comportamentais",
+    "submit_btn": "Aggiorna Configurazione Assistente",
+    "saving_btn": "Salvataggio in corso..."
+  },
+  "assistant_form": {
+    "preview_title": "Anteprima Collaboratore Digitale",
+    "operating_lang": "Lingua Operativa:",
+    "tone_label": "Tono:",
+    "personality_title": "Personalità e Comportamento",
+    "personality_empty": "Nessuna descrizione specificata per la personalità operativa.",
+    "status_active": "🟢 Attivo",
+    "status_inactive": "⚪ Disattivato",
+    "form_title": "Impostazioni Operative (Fase 1)",
+    "name_label": "Nome del Collaboratore Digitale",
+    "name_placeholder": "es. Chiara, Marco, Giulia...",
+    "tone_select_label": "Tono di Comunicazione",
+    "tone_cordial": "Cordiale ed Empatico (Consigliato)",
+    "tone_formal": "Formale e Istituzionale",
+    "tone_direct": "Diretto e Sintetico",
+    "personality_label": "Personalità e Tratti Comportamentali",
+    "personality_placeholder": "Descrizione del carattere, livello di formalità, pazienza ed energia comunicativa...",
+    "language_label": "Lingua Operativa del Collaboratore",
+    "avatar_label": "Avatar Placeholder (ID / URL)",
+    "submit_btn": "Aggiorna Configurazione Assistente",
+    "saving_btn": "Salvataggio in corso...",
+    "readonly_notice": "Modalità sola lettura per il tuo ruolo di visualizzatore."
+  },
+  "lang_selector": {
+    "label": "Lingua Interfaccia:",
+    "pt": "🇧🇷 Portoghese",
+    "it": "🇮🇹 Italiano"
+  }
+}

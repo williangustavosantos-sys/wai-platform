@@ -8,6 +8,7 @@ import { revalidatePath } from 'next/cache';
 export async function updateSettingsAction(organizationSlug: string, formData: FormData) {
   const displayName = formData.get('displayName') as string;
   const themePreference = (formData.get('themePreference') as 'institutional' | 'balanced' | 'cool') || 'institutional';
+  const locale = (formData.get('locale') as string) || 'it-IT';
   const correlationId = crypto.randomUUID();
 
   const supabase = await createServerClient();
@@ -24,7 +25,7 @@ export async function updateSettingsAction(organizationSlug: string, formData: F
     adminClient,
     session.userId,
     organizationSlug,
-    { displayName, themePreference },
+    { displayName, themePreference, locale },
     correlationId
   );
 

@@ -9,6 +9,7 @@ export interface BusinessRulesConfig {
   outOfHoursMessage: string;
   autoConfirmAppointments: boolean;
   maxAdvanceDaysBooking: number;
+  minAdvanceBookingHours: number;
   customRulesJson: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;

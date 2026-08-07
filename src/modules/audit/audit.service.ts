@@ -4,7 +4,7 @@ import { Logger } from '@/logging/logger';
 export interface AuditLogPayload {
   organizationId?: string | null;
   actorUserId?: string | null;
-  actorType?: 'user' | 'system' | 'admin';
+  actorType?: 'user' | 'system' | 'admin' | 'ai_tool';
   action: string;
   entityType: string;
   entityId: string;

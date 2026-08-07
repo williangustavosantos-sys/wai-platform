@@ -6,6 +6,7 @@ import { verifyOrganizationAccess } from '@/security/auth';
 export interface OrganizationSettingsUpdate {
   displayName?: string;
   themePreference?: 'institutional' | 'balanced' | 'cool';
+  locale?: string;
   [key: string]: unknown;
 }
 
@@ -22,7 +23,7 @@ export async function getOrganizationBySlug(
 }
 
 /**
- * Performs a minimal, reversible configuration update on organization settings_json.
+ * Performs a minimal, reversible configuration update on organization settings_json and locale.
  * Validates ownership role, executes under RLS, and records immutable before/after audit log.
  */
 export async function updateOrganizationSettings(
@@ -47,13 +48,20 @@ export async function updateOrganizationSettings(
     return { success: false, error: 'Operação permitida exclusivamente ao proprietário (owner) da organização.' };
   }
 
-  const beforeData = { ...access.settingsJson };
-  const afterData = { ...beforeData, ...newSettings };
+  const beforeData = { ...access.settingsJson, locale: access.locale };
+  const { locale, ...settingsJsonUpdates } = newSettings;
+  const afterSettingsJson = { ...access.settingsJson, ...settingsJsonUpdates };
+  const afterData = { ...afterSettingsJson, locale: locale || access.locale };
+
+  const updatePayload: Record<string, unknown> = { settings_json: afterSettingsJson };
+  if (locale) {
+    updatePayload.locale = locale;
+  }
 
   // 2. Perform update using authenticated client (enforces RLS)
   const { error: updateError } = await client
     .from('organizations')
-    .update({ settings_json: afterData })
+    .update(updatePayload)
     .eq('id', access.organizationId);
 
   if (updateError) {
