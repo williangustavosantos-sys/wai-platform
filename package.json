@@ -7,14 +7,23 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest"
+    "test": "vitest",
+    "test:chiara": "vitest run tests/chiara/chiara_test_runner.test.ts",
+    "test:chiara:offline": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/chiara/chiara_test_runner.test.ts",
+    "test:scenarios:offline": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/chiara/real_conversation_scenarios.test.ts"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.39",
+    "@ai-sdk/openai": "^0.0.38",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.111.0",
+    "ai": "^3.4.33",
+    "dotenv": "^17.4.2",
     "next": "16.2.12",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "z": "^1.0.9",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

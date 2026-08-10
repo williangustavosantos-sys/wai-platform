@@ -6,14 +6,15 @@ import {
   listAppointments,
   listTimeSlots,
   createAppointment as calendarCreateAppointment,
-  updateAppointmentStatus
+  updateAppointmentStatus,
+  rescheduleAppointment
 } from '@/modules/calendar/calendar.service';
 import {
   listCustomers,
   createCustomer as crmCreateCustomer,
   normalizePhoneNumber
 } from '@/modules/crm/crm.service';
-import { getBusinessRulesConfig, listBusinessExceptions } from '@/modules/rules/rules.service';
+import { getBusinessRulesConfig, listBusinessExceptions, createBusinessException } from '@/modules/rules/rules.service';
 import {
   CheckAvailabilityInput,
   FindCustomerInput,
@@ -104,6 +105,43 @@ export const DEFINED_TOOLS: ToolDefinition[] = [
       appointmentId: { type: 'string', description: 'UUID dell appuntamento', required: true },
       newStartAt: { type: 'string', description: 'Nuovo orario in ISO', required: true }
     }
+  },
+  {
+    name: 'getCompanyInformation',
+    description: 'Recupera le informazioni sulla società (indirizzo, telefono, orari, servizi, professionisti, cancellazione).',
+    parameters: {
+      queryType: { type: 'string', description: 'Tipo di query (hours, address, services, professionals, etc.)', required: false }
+    }
+  },
+  {
+    name: 'ownerListAgenda',
+    description: 'Consente al titolare di visualizzare gli appuntamenti per una data specifica.',
+    parameters: {
+      date: { type: 'string', description: 'Data formato YYYY-MM-DD', required: true }
+    }
+  },
+  {
+    name: 'ownerBlockCalendar',
+    description: 'Consente al titolare di bloccare il calendario/creare una chiusura per una certa data.',
+    parameters: {
+      date: { type: 'string', description: 'Data formato YYYY-MM-DD', required: true },
+      reason: { type: 'string', description: 'Motivo del blocco', required: false }
+    }
+  },
+  {
+    name: 'ownerMoveAppointment',
+    description: 'Consente al titolare di spostare l appuntamento di un cliente a un altro giorno/ora.',
+    parameters: {
+      customerName: { type: 'string', description: 'Nome o cognome del cliente', required: true },
+      newDateTime: { type: 'string', description: 'Nuovo orario in ISO o YYYY-MM-DDTHH:MM', required: true }
+    }
+  },
+  {
+    name: 'ownerGetStats',
+    description: 'Consente al titolare di visualizzare il conteggio e statistiche degli appuntamenti.',
+    parameters: {
+      date: { type: 'string', description: 'Data formato YYYY-MM-DD', required: true }
+    }
   }
 ];
 
@@ -182,6 +220,7 @@ export async function executeCheckAvailability(
           result: { 
             message: 'Specifica il professionista per verificare la disponibilità.',
             requiresProfessionalSelection: true,
+            service: { id: targetService.id, name: targetService.name },
             professionals: professionals.map(p => ({ id: p.id, name: p.name }))
           } 
         };
@@ -379,7 +418,7 @@ export async function executeCheckAvailability(
     return { success: true, result: { days: results } };
 
   } catch (err: unknown) {
-    logger.error('Errore durante il controllo della disponibilità', { error: err });
+     logger.error('Errore durante il controllo della disponibilità', { error: err instanceof Error ? err.stack || err.message : String(err) });
     return { success: false, error: 'Errore interno nel controllo disponibilità' };
   }
 }
@@ -417,7 +456,17 @@ export async function executeToolByName(
       case 'cancelAppointment':
         return await updateAppointmentStatus(client, adminClient, userId, organizationSlug, args.appointmentId, 'cancelled', null, 'tool-call');
       case 'rescheduleAppointment':
-        return { success: false, error: 'Not implemented' };
+        return await rescheduleAppointment(client, adminClient, userId, organizationSlug, args.appointmentId, args.newStartAt, correlationId || 'tool-call');
+      case 'getCompanyInformation':
+        return await executeGetCompanyInformation(client, userId, organizationSlug);
+      case 'ownerListAgenda':
+        return await executeOwnerListAgenda(client, userId, organizationSlug, args.date);
+      case 'ownerBlockCalendar':
+        return await executeOwnerBlockCalendar(client, adminClient, userId, organizationSlug, args.date, args.reason);
+      case 'ownerMoveAppointment':
+        return await executeOwnerMoveAppointment(client, adminClient, userId, organizationSlug, args.customerName, args.newDateTime);
+      case 'ownerGetStats':
+        return await executeOwnerGetStats(client, userId, organizationSlug, args.date);
       default:
         return { success: false, error: 'Unknown tool' };
     }
@@ -425,4 +474,88 @@ export async function executeToolByName(
     logger.error('Error executing tool', { toolName, error: e });
     return { success: false, error: e.message || 'Error executing tool' };
   }
+}
+
+async function executeGetCompanyInformation(client: any, userId: string, organizationSlug: string): Promise<ToolExecutionResponse> {
+  const orgResult = await client.from('organizations').select('*').eq('slug', organizationSlug).single();
+  if (orgResult.error || !orgResult.data) {
+    return { success: false, error: 'Organizzazione non trovata.' };
+  }
+  const org = orgResult.data;
+  const settings = org.settings_json || {};
+  const services = await listServices(client, userId, organizationSlug);
+  const professionals = await listProfessionals(client, userId, organizationSlug);
+  const rulesResult = await client.from('business_rules').select('*').eq('organization_id', org.id).maybeSingle();
+
+  return {
+    success: true,
+    result: {
+      name: org.name,
+      address: settings.address || 'Non specificato',
+      phone: settings.phone || 'Non specificato',
+      whatsapp: settings.whatsapp || 'Non specificato',
+      email: settings.email || 'Non specificato',
+      workingHours: settings.working_hours || 'Non specificato',
+      services: services.map(s => ({ name: s.name, price: s.price !== null ? s.price / 100 : null, duration: s.durationMinutes })),
+      professionals: professionals.map(p => ({ name: p.name, title: p.title || (p.status === 'active' ? 'Professionista' : 'Inattivo') })),
+      cancellationPolicy: rulesResult?.data?.cancellation_policy || {}
+    }
+  };
+}
+
+async function executeOwnerListAgenda(client: any, userId: string, organizationSlug: string, date: string): Promise<ToolExecutionResponse> {
+  const allAppts = await listAppointments(client, userId, organizationSlug);
+  const filtered = allAppts.filter(a => a.startAt.startsWith(date));
+  return { success: true, result: { appointments: filtered } };
+}
+
+async function executeOwnerBlockCalendar(client: any, adminClient: any, userId: string, organizationSlug: string, date: string, reason?: string): Promise<ToolExecutionResponse> {
+  const res = await createBusinessException(client, adminClient, userId, organizationSlug, {
+    startDate: date,
+    endDate: date,
+    reason: reason || 'Blocco calendario da titolare',
+    isFullDay: true
+  }, 'owner-command');
+  return res;
+}
+
+async function executeOwnerMoveAppointment(client: any, adminClient: any, userId: string, organizationSlug: string, customerName: string, newDateTime: string): Promise<ToolExecutionResponse> {
+  const customers = await listCustomers(client, userId, organizationSlug);
+  const match = customers.find(c => 
+    `${c.firstName} ${c.lastName}`.toLowerCase().includes(customerName.toLowerCase()) ||
+    c.firstName.toLowerCase().includes(customerName.toLowerCase()) ||
+    c.lastName.toLowerCase().includes(customerName.toLowerCase())
+  );
+  if (!match) {
+    return { success: false, error: `Cliente "${customerName}" non trovato.` };
+  }
+
+  const appts = await listAppointments(client, userId, organizationSlug);
+  const upcoming = appts
+    .filter(a => a.customerId === match.id && ['confirmed', 'held', 'pending'].includes(a.status))
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+
+  if (upcoming.length === 0) {
+    return { success: false, error: `Nessun appuntamento attivo trovato per ${match.firstName} ${match.lastName}.` };
+  }
+
+  return await rescheduleAppointment(client, adminClient, userId, organizationSlug, upcoming[0].id, newDateTime, 'owner-command');
+}
+
+async function executeOwnerGetStats(client: any, userId: string, organizationSlug: string, date: string): Promise<ToolExecutionResponse> {
+  const allAppts = await listAppointments(client, userId, organizationSlug);
+  const filtered = allAppts.filter(a => a.startAt.startsWith(date));
+  return {
+    success: true,
+    result: {
+      date,
+      counts: {
+        total: filtered.length,
+        confirmed: filtered.filter(a => a.status === 'confirmed').length,
+        cancelled: filtered.filter(a => a.status === 'cancelled').length,
+        held: filtered.filter(a => a.status === 'held').length,
+        pending: filtered.filter(a => a.status === 'pending').length,
+      }
+    }
+  };
 }

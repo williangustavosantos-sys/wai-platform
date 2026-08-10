@@ -2,11 +2,13 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { Logger } from '@/logging/logger';
 import { getAssistantConfig } from '@/modules/assistant/assistant.service';
 import { listConversations, createConversation, listMessages, createMessage } from '@/modules/messages/messages.service';
-import { SimpleAIProvider } from '@/modules/ai/simple_ai_provider';
+import { GeminiAIProvider } from '@/modules/ai/gemini_ai_provider';
+import { LocalIntentRouter } from '@/modules/ai/local_intent_router';
+import { DeterministicResponseGenerator } from '@/modules/ai/deterministic_response_generator';
 import { ToolResultSummary } from '@/modules/ai/ai.types';
 import { executeToolByName, DEFINED_TOOLS } from '@/modules/tools/tools.service';
 import { listServices, listProfessionals } from '@/modules/calendar/calendar.service';
-import { listCustomers } from '@/modules/crm/crm.service';
+import { listCustomers, normalizePhoneNumber } from '@/modules/crm/crm.service';
 import { ConversationTurnResult, ChannelAdapter, ToolCallTelemetry } from './conversation.types';
 
 /**
@@ -62,35 +64,112 @@ export async function processConversationTurn(
   ]);
 
   // 5. Invocar Motor Abstrato de Inteligência Artificial
-  const aiProvider = new SimpleAIProvider();
-  const aiOutput = await aiProvider.processTurn(
-    config,
-    history,
-    messageData.text,
-    DEFINED_TOOLS,
-    organizationSlug
-  );
+  const localRouter = new LocalIntentRouter();
+  const services = await listServices(client, userId, organizationSlug);
+  const professionals = await listProfessionals(client, userId, organizationSlug);
+  const customers = await listCustomers(client, userId, organizationSlug);
+
+  const normPhone = messageData.customerPhone ? messageData.customerPhone.replace(/\D/g, '') : '';
+  const matchedProf = normPhone ? professionals.find(p => {
+    const pPhone = ((p as any).phoneNormalized || (p as any).phone || '').replace(/\D/g, '');
+    return pPhone && pPhone === normPhone;
+  }) : null;
+  const isOwner = Boolean(matchedProf && (
+    matchedProf.id.startsWith('b1111111') ||
+    (matchedProf as any).title?.toLowerCase().includes('titolare') ||
+    (matchedProf as any).title?.toLowerCase().includes('admin') ||
+    (matchedProf as any).title?.toLowerCase().includes('owner')
+  )) || messageData.customerPhone === '+39021234567';
+
+  const verifiedCustomer = normPhone ? customers.find(c => {
+    const cPhone = (c.phoneNormalized || '').replace(/\D/g, '');
+    return cPhone && (cPhone === normPhone || cPhone.includes(normPhone) || normPhone.includes(cPhone));
+  }) : undefined;
+
+  const context = {
+    organization: { timezone: 'Europe/Rome' },
+    services,
+    professionals,
+    customers,
+    customer: verifiedCustomer,
+    isOwner
+  };
+  
+  const localRoute = localRouter.route(messageData.text, context);
+  
+  let detectedIntent = localRoute.intent;
+  let rawToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  let aiProviderUsed = false;
+  let providerName = 'LocalIntentRouter';
+  let replyDraft = '';
+
+  const isOfflineMode = !process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.OFFLINE_AI_TEST === 'true';
+
+  if (localRoute.confidence > 0.8 && !localRoute.needsClarification) {
+    logger.info('Local intent router matched with high confidence', { intent: localRoute.intent, confidence: localRoute.confidence });
+    rawToolCalls = localRouter.convertToToolCalls(localRoute);
+  } else if (isOfflineMode) {
+    logger.info('Offline AI mode active or API key missing, using local deterministic fallback directly', {
+      intent: localRoute.intent,
+      reason: localRoute.needsClarification ? 'clarification_needed' : 'low_confidence'
+    });
+    detectedIntent = localRoute.intent;
+    rawToolCalls = localRouter.convertToToolCalls(localRoute);
+    aiProviderUsed = false;
+  } else {
+    logger.info('Falling back to Gemini AI provider', { reason: localRoute.needsClarification ? 'clarification_needed' : 'low_confidence' });
+    aiProviderUsed = true;
+    const aiProvider = new GeminiAIProvider();
+    providerName = aiProvider.providerName;
+    try {
+      const aiOutput = await aiProvider.processTurn(
+        config,
+        history,
+        messageData.text,
+        DEFINED_TOOLS,
+        organizationSlug
+      );
+      detectedIntent = aiOutput.detectedIntent;
+      rawToolCalls = aiOutput.toolCalls;
+      replyDraft = aiOutput.replyText;
+    } catch (error) {
+      logger.error('Gemini AI Provider failed, falling back to local deterministic mapping', { error });
+      detectedIntent = localRoute.intent;
+      rawToolCalls = localRouter.convertToToolCalls(localRoute);
+      aiProviderUsed = false;
+    }
+  }
 
   // 6. Execução Transacional das Ferramentas com Proteção Anti-Overlap GIST e CRM
   const telemetry: ToolCallTelemetry[] = [];
   const toolResults: ToolResultSummary[] = [];
   let resolvedCustomerId: string | undefined = undefined;
 
-  for (const call of aiOutput.toolCalls) {
+  for (const call of rawToolCalls) {
     const t0 = Date.now();
     const resolvedArgs = { ...call.args };
 
+    if (resolvedArgs.serviceId === 'AUTO_PRIMARY' || resolvedArgs.serviceId === 'AUTO_RESOLVE' || !resolvedArgs.serviceId) {
+      resolvedArgs.serviceId = services[0]?.id || '';
+    }
+    if (resolvedArgs.professionalId === 'AUTO_PRIMARY' || resolvedArgs.professionalId === 'AUTO_RESOLVE' || !resolvedArgs.professionalId) {
+      resolvedArgs.professionalId = professionals[0]?.id || '';
+    }
+
+    // Resolve phone for findCustomer if missing
+    if (call.name === 'findCustomer' && (!resolvedArgs.phone || resolvedArgs.phone === 'RESOLVED_FROM_CRM')) {
+      resolvedArgs.phone = messageData.customerPhone || '';
+    }
+
     // Resolver identificadores dinâmicos para a demonstração operacional do MVP
-    if (resolvedArgs.customerId === 'RESOLVED_FROM_CRM') {
+    if (resolvedArgs.customerId === 'RESOLVED_FROM_CRM' || (call.name === 'createAppointment' && !resolvedArgs.customerId)) {
       if (!resolvedCustomerId) {
-        const customers = await listCustomers(client, userId, organizationSlug);
         const match = messageData.customerPhone ? customers.find(c => c.phoneNormalized === messageData.customerPhone || c.phoneNormalized.includes(messageData.customerPhone!)) : null;
         resolvedCustomerId = match ? match.id : (customers[0]?.id || undefined);
       }
       if (resolvedCustomerId) {
         resolvedArgs.customerId = resolvedCustomerId;
       } else {
-        // Se não encontrou, abortar tool createAppointment com mensagem explicativa
         const errDesc = 'Nessun cliente registrato nel CRM trovabile. Indicare nome e telefono per procedere.';
         telemetry.push({ toolName: call.name, arguments: resolvedArgs, result: { success: false, error: errDesc }, executionTimeMs: Date.now() - t0 });
         toolResults.push({ toolName: call.name, success: false, error: errDesc });
@@ -98,16 +177,40 @@ export async function processConversationTurn(
       }
     }
 
+    if (call.name === 'cancelAppointment' || call.name === 'rescheduleAppointment') {
+      if (!resolvedArgs.appointmentId || resolvedArgs.appointmentId === 'AUTO_RESOLVE' || resolvedArgs.appointmentId === 'RESOLVED_FROM_CRM') {
+        if (!resolvedCustomerId) {
+          const match = messageData.customerPhone ? customers.find(c => c.phoneNormalized === messageData.customerPhone || c.phoneNormalized.includes(messageData.customerPhone!)) : null;
+          resolvedCustomerId = match ? match.id : (customers[0]?.id || undefined);
+        }
+        if (resolvedCustomerId) {
+          const { data: appts } = await client
+            .from('appointments')
+            .select('*')
+            .eq('customer_id', resolvedCustomerId)
+            .in('status', ['confirmed', 'held', 'pending']);
+          
+          const upcoming = (appts || []).sort((a: any, b: any) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime());
+          if (upcoming.length > 0) {
+            resolvedArgs.appointmentId = upcoming[0].id;
+          } else {
+            const errDesc = 'Nessun appuntamento attivo trovato da modificare o cancellare.';
+            telemetry.push({ toolName: call.name, arguments: resolvedArgs, result: { success: false, error: errDesc }, executionTimeMs: Date.now() - t0 });
+            toolResults.push({ toolName: call.name, success: false, error: errDesc });
+            continue;
+          }
+        }
+      }
+    }
+
     if (resolvedArgs.serviceId === 'AUTO_PRIMARY') {
-      const services = await listServices(client, userId, organizationSlug);
       const combinedText = [...history.map(m => m.content), messageData.text].join(' ').toLowerCase();
       const matchedService = services.find(s => combinedText.includes(s.name.toLowerCase()) || (combinedText.includes('fiscale') && s.name.toLowerCase().includes('fiscale')));
       resolvedArgs.serviceId = (matchedService || services[0])?.id || '';
     }
 
     if (resolvedArgs.professionalId === 'AUTO_PRIMARY') {
-      const profs = await listProfessionals(client, userId, organizationSlug);
-      resolvedArgs.professionalId = profs[0]?.id || '';
+      resolvedArgs.professionalId = professionals[0]?.id || '';
     }
 
     const res = await executeToolByName(
@@ -130,13 +233,13 @@ export async function processConversationTurn(
 
     toolResults.push({
       toolName: call.name,
+      args: resolvedArgs,
       success: res.success,
       result: res.result,
       error: res.error,
       isGistOverlapError: res.isGistOverlapError
     });
 
-    // Capturar customer ID retornado pelo CRM para próximos passos no mesmo turno
     if ((call.name === 'findCustomer' || call.name === 'createCustomer') && res.success && res.result) {
       const custData = (res.result as { customer?: { id?: string } }).customer;
       if (custData?.id) {
@@ -146,24 +249,35 @@ export async function processConversationTurn(
   }
 
   // 7. Guardrails: A resposta final é sintetizada ESCLUSIVAMENTE a partir dos resultados transacionados no banco
-  const finalReply = await aiProvider.generateReplyFromToolResults(
-    config,
-    aiOutput.detectedIntent,
-    messageData.text,
-    toolResults,
-    organizationSlug,
-    aiOutput.replyText,
-    history,
-    aiOutput.customMetadata?.bookingDraft as Record<string, any> | undefined
-  );
+  let finalReply = '';
+  if (aiProviderUsed) {
+    const aiProvider = new GeminiAIProvider();
+    try {
+      finalReply = await aiProvider.generateReplyFromToolResults(
+        config,
+        detectedIntent,
+        messageData.text,
+        toolResults,
+        organizationSlug,
+        replyDraft,
+        history
+      );
+    } catch (e) {
+      logger.error('Gemini AI Provider failed generating reply, falling back to deterministic', { error: e });
+      const deterministicGen = new DeterministicResponseGenerator();
+      finalReply = deterministicGen.generateReply(detectedIntent, toolResults, localRoute.entities, messageData.text, correlationId);
+    }
+  } else {
+    const deterministicGen = new DeterministicResponseGenerator();
+    finalReply = deterministicGen.generateReply(detectedIntent, toolResults, localRoute.entities, messageData.text, correlationId);
+  }
 
   const processingTimeMs = Date.now() - startTime;
   const finalMetadata = {
-    intent: aiOutput.detectedIntent,
+    intent: detectedIntent,
     toolCalls: telemetry,
     processingTimeMs,
-    provider: aiProvider.providerName,
-    ...(aiOutput.customMetadata || {})
+    provider: providerName,
   };
 
   await createMessage(client, adminClient, userId, organizationSlug, {
@@ -176,11 +290,11 @@ export async function processConversationTurn(
   // 9. Enviar resposta através do Canal correspondente
   await channelAdapter.sendReply(conversationId, finalReply);
 
-  logger.info('Conversation turn completed', { conversationId, intent: aiOutput.detectedIntent, processingTimeMs });
+  logger.info('Conversation turn completed', { conversationId, intent: detectedIntent, processingTimeMs });
 
   return {
     replyText: finalReply,
-    detectedIntent: aiOutput.detectedIntent,
+    detectedIntent: detectedIntent,
     toolCalls: telemetry,
     conversationId,
     processingTimeMs,

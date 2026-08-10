@@ -22,6 +22,7 @@ export interface Professional {
   phoneNormalized: string | null;
   status: ProfessionalStatus;
   createdAt: string;
+  title?: string | null;
 }
 
 export interface AvailableTimeSlot {

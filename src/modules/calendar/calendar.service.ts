@@ -99,6 +99,7 @@ export async function listProfessionals(client: SupabaseClient, userId: string, 
     email: row.email || null,
     phoneNormalized: row.phone_normalized || null,
     status: row.status,
+    title: row.title || null,
     createdAt: row.created_at,
   }));
 }
@@ -391,4 +392,96 @@ export async function updateAppointmentStatus(
   }, adminClient, log);
 
   return { success: true };
+}
+
+export async function rescheduleAppointment(
+  client: SupabaseClient, adminClient: SupabaseClient, userId: string, organizationSlug: string,
+  appointmentId: string, newStartAt: string, correlationId: string, logger?: Logger
+): Promise<{ success: boolean; data?: Appointment; error?: string }> {
+  const log = logger || new Logger({ correlationId, userId, organizationSlug });
+  const access = await verifyOrganizationAccess(client, userId, organizationSlug, log);
+
+  if (!access || (access.role !== 'organization_owner' && access.role !== 'organization_operator')) {
+    return { success: false, error: 'Permessi insufficienti per riprogrammare appuntamenti.' };
+  }
+
+  // 1. Fetch existing appointment to get service_id, professional_id, status, etc.
+  const { data: existing, error: fetchErr } = await client
+    .from('appointments')
+    .select('*')
+    .eq('id', appointmentId)
+    .eq('organization_id', access.organizationId)
+    .single();
+
+  if (fetchErr || !existing) {
+    return { success: false, error: 'Appuntamento non trovato.' };
+  }
+
+  // 2. Fetch service to get duration_minutes
+  const { data: serviceRow, error: serviceError } = await client
+    .from('services')
+    .select('duration_minutes')
+    .eq('id', existing.service_id)
+    .eq('organization_id', access.organizationId)
+    .single();
+
+  if (serviceError || !serviceRow) {
+    return { success: false, error: 'Servizio dell\'appuntamento non valido.' };
+  }
+
+  const startDate = new Date(newStartAt);
+  if (isNaN(startDate.getTime())) {
+    return { success: false, error: 'Nuova data e ora di inizio non valida.' };
+  }
+
+  const durationMs = serviceRow.duration_minutes * 60 * 1000;
+  const endDate = new Date(startDate.getTime() + durationMs);
+
+  const beforeData = {
+    start_at: existing.start_at,
+    end_at: existing.end_at,
+    status: existing.status
+  };
+
+  const updatePayload = {
+    start_at: startDate.toISOString(),
+    end_at: endDate.toISOString(),
+    status: 'confirmed'
+  };
+
+  const { data: updated, error: updateError } = await client
+    .from('appointments')
+    .update(updatePayload)
+    .eq('id', appointmentId)
+    .eq('organization_id', access.organizationId)
+    .select('*')
+    .single();
+
+  if (updateError || !updated) {
+    log.error('Appointment reschedule failed', { error: updateError });
+    if (updateError?.code === '23P01') {
+      return { 
+        success: false, 
+        error: 'Conflitto di orario (Double-Booking bloccato meccanicamente). Il professionista selezionato è già impegnato in un appuntamento confermato nel periodo indicato.' 
+      };
+    }
+    return { success: false, error: `Impossibile spostare l'appuntamento: ${updateError?.message || 'Errore DB'}` };
+  }
+
+  await recordAuditLog({
+    organizationId: access.organizationId, actorUserId: userId, actorType: 'user',
+    action: 'RESCHEDULE_APPOINTMENT', entityType: 'appointment', entityId: appointmentId,
+    beforeData, afterData: updatePayload, correlationId,
+  }, adminClient, log);
+
+  return {
+    success: true,
+    data: {
+      id: updated.id, organizationId: updated.organization_id, customerId: updated.customer_id,
+      serviceId: updated.service_id, professionalId: updated.professional_id,
+      startAt: updated.start_at, endAt: updated.end_at, status: updated.status,
+      notes: updated.notes, cancellationReason: updated.cancellation_reason || null, heldUntil: null,
+      createdAt: updated.created_at, updatedAt: updated.updated_at,
+    }
+  };
 }

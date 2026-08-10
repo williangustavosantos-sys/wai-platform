@@ -86,81 +86,288 @@ describe('Bateria Completa de Testes da Chiara (Studio Aurora - v0.1.1)', () => 
 
     mockUserClient = {
       from: (table: string) => {
-        const createChain = (dataRet: any) => {
+        const createQueryChain = (store: any[]) => {
+          let currentData = [...store];
           const chain: any = {
-            eq: () => chain,
-            neq: () => chain,
-            order: () => chain,
-            limit: () => chain,
-            single: async () => ({ data: Array.isArray(dataRet) ? dataRet[0] : dataRet, error: null }),
-            maybeSingle: async () => ({ data: Array.isArray(dataRet) ? dataRet[0] : dataRet, error: null }),
-            then: (fn: any) => fn({ data: dataRet, error: null })
+            eq: (col: string, val: any) => {
+              if (col === 'organization_id') return chain;
+              if (col === 'phone_normalized' || col === 'phone') {
+                const target = val ? String(val).replace(/\D/g, '') : '';
+                currentData = currentData.filter(item => {
+                  const pNorm = (item.phone_normalized || item.phone || '').replace(/\D/g, '');
+                  return pNorm === target || pNorm.includes(target) || target.includes(pNorm);
+                });
+              } else if (col === 'id') {
+                currentData = currentData.filter(item => item.id === val);
+              } else {
+                currentData = currentData.filter(item => item[col] === val);
+              }
+              return chain;
+            },
+            neq: (col: string, val: any) => {
+              currentData = currentData.filter(item => item[col] !== val);
+              return chain;
+            },
+            in: (col: string, vals: any[]) => {
+              currentData = currentData.filter(item => vals.includes(item[col]));
+              return chain;
+            },
+            gte: (col: string, val: any) => {
+              currentData = currentData.filter(item => new Date(item[col]) >= new Date(val));
+              return chain;
+            },
+            lte: (col: string, val: any) => {
+              currentData = currentData.filter(item => new Date(item[col]) <= new Date(val));
+              return chain;
+            },
+            order: (col: string, options?: { ascending?: boolean }) => {
+              const asc = options?.ascending !== false;
+              currentData.sort((a, b) => {
+                const valA = a[col];
+                const valB = b[col];
+                if (typeof valA === 'string' && typeof valB === 'string') {
+                  return asc ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                }
+                return asc ? (valA - valB) : (valB - valA);
+              });
+              return chain;
+            },
+            limit: (n: number) => {
+              currentData = currentData.slice(0, n);
+              return chain;
+            },
+            select: () => chain,
+            single: async () => {
+              const resolved = resolveJoins(currentData);
+              if (resolved.length === 0) {
+                return { data: null, error: { message: 'Not found', code: 'PGRST116' } };
+              }
+              return { data: resolved[0], error: null };
+            },
+            maybeSingle: async () => {
+              const resolved = resolveJoins(currentData);
+              return { data: resolved[0] || null, error: null };
+            },
+            then: (fn: any) => {
+              const resolved = resolveJoins(currentData);
+              return fn({ data: resolved, error: null });
+            }
           };
           return chain;
         };
 
+        const resolveJoins = (items: any[]) => {
+          return items.map(item => {
+            const resolved = { ...item };
+            if (item.customer_id) {
+              const c = customersStore.find(cust => cust.id === item.customer_id);
+              resolved.customers = c ? { first_name: c.first_name, last_name: c.last_name } : null;
+            }
+            if (item.service_id) {
+              const srvs = [
+                { id: 'c1111111', name: 'Consulenza Fiscale Iniziale' },
+                { id: 'c2222222', name: 'Revisione Bilancio Annuale' }
+              ];
+              const s = srvs.find(srv => srv.id === item.service_id);
+              resolved.services = s ? { name: s.name } : null;
+            }
+            if (item.professional_id) {
+              const profs = [
+                { id: 'b1111111', name: 'Dott. Marco Rossi' },
+                { id: 'b2222222', name: 'Dott.ssa Sofia Bianchi' }
+              ];
+              const p = profs.find(prof => prof.id === item.professional_id);
+              resolved.professionals = p ? { name: p.name } : null;
+            }
+            return resolved;
+          });
+        };
+
         if (table === 'organizations') {
           const orgData = { id: '11111111-1111-1111-1111-111111111111', name: 'Studio Aurora', slug: 'studio-aurora', status: 'active', settings_json: { address: 'Via Roma 45, Milano (MI)', phone: '+39 02 1234567', working_hours: 'Lun-Ven 09:00 - 18:00' } };
-          return { select: () => createChain(orgData) };
+          return { select: () => createQueryChain([orgData]) };
         }
         if (table === 'organization_members') {
-          const memData = { role: 'organization_owner', status: 'active' };
-          return { select: () => createChain(memData) };
+          const memData = { role: 'organization_owner', status: 'active', user_id: 'user-admin-aurora', organization_id: '11111111-1111-1111-1111-111111111111' };
+          return { select: () => createQueryChain([memData]) };
         }
         if (table === 'digital_employees') {
           const empData = { id: 'a1111111', name: 'Chiara', language: 'it-IT', communication_tone: 'cordial_empathic', status: 'active' };
-          return { select: () => createChain(empData) };
+          return { select: () => createQueryChain([empData]) };
+        }
+        if (table === 'business_rules') {
+          const ruleData = {
+            id: 'rule-1',
+            organization_id: '11111111-1111-1111-1111-111111111111',
+            cancellation_policy: { min_hours_notice: 24, fee_percent: 0, refund_policy: 'standard', no_show_note: '' },
+            standard_messages: { welcome: '', confirmation: '', cancellation: '', out_of_hours: '' },
+            response_rules: { auto_confirm_appointments: true, max_advance_booking_days: 30, min_advance_booking_hours: 2 }
+          };
+          return {
+            select: () => createQueryChain([ruleData]),
+            insert: (rec: any) => ({ select: () => ({ single: async () => ({ data: ruleData, error: null }) }) })
+          };
+        }
+        if (table === 'availability_rules') {
+          const rules: any[] = [];
+          for (const d of [1, 2, 3, 4, 5]) {
+            rules.push({ id: `r1-${d}`, professional_id: 'b1111111', day_of_week: d, start_time: '09:00', end_time: '18:00', is_active: true, organization_id: '11111111-1111-1111-1111-111111111111' });
+            rules.push({ id: `r2-${d}`, professional_id: 'b2222222', day_of_week: d, start_time: '09:00', end_time: '18:00', is_active: true, organization_id: '11111111-1111-1111-1111-111111111111' });
+          }
+          return { select: () => createQueryChain(rules) };
+        }
+        if (table === 'closures') {
+          const excs = [
+            { id: 'ex-1', start_at: '2026-08-14', end_at: '2026-08-14', reason: 'Chiusura estiva / Ferie', organization_id: '11111111-1111-1111-1111-111111111111' }
+          ];
+          return { select: () => createQueryChain(excs) };
         }
         if (table === 'customers') {
           return {
-            select: () => {
-              const chain: any = {
-                eq: (col: string, val: string) => {
-                  const filtered = customersStore.filter(c => c[col] === val || c.phone_normalized === val || col === 'organization_id');
-                  return createChain(filtered.length > 0 ? filtered : customersStore);
-                },
-                order: () => chain,
-                single: async () => ({ data: customersStore[0], error: null }),
-                then: (fn: any) => fn({ data: customersStore, error: null })
-              };
-              return chain;
-            },
+            select: () => createQueryChain(customersStore),
             insert: (rec: any) => {
               const item = Array.isArray(rec) ? rec[0] : rec;
-              const newCust = { ...item, id: `cust-${Date.now()}` };
+              const newCust = {
+                id: `cust-${Date.now()}`,
+                first_name: item.first_name || item.firstName || '',
+                last_name: item.last_name || item.lastName || '',
+                phone_normalized: item.phone_normalized || item.phoneNormalized || item.phone || '',
+                email: item.email || null,
+                birth_date: item.birth_date || null,
+                marketing_consent: item.marketing_consent ?? false,
+                notes: item.notes || null,
+                status: 'active',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              };
               customersStore.push(newCust);
               return { select: () => ({ single: async () => ({ data: newCust, error: null }) }) };
+            },
+            update: (updatePayload: any) => {
+              let queryData = [...customersStore];
+              const updateChain = {
+                eq: (col: string, val: any) => {
+                  if (col === 'organization_id') return updateChain;
+                  queryData = queryData.filter(c => c[col] === val);
+                  return updateChain;
+                },
+                select: () => ({
+                  single: async () => {
+                    if (queryData.length > 0) {
+                      Object.assign(queryData[0], updatePayload);
+                      return { data: queryData[0], error: null };
+                    }
+                    return { data: null, error: { message: 'Not found' } };
+                  }
+                }),
+                then: (fn: any) => {
+                  queryData.forEach(c => Object.assign(c, updatePayload));
+                  return fn({ data: queryData, error: null });
+                }
+              };
+              return updateChain;
             }
           };
         }
         if (table === 'services') {
           const srvs = [
-            { id: 'c1111111', name: 'Consulenza Fiscale Iniziale', duration_minutes: 45, price_cents: 12000, buffer_after_minutes: 15 },
-            { id: 'c2222222', name: 'Revisione Bilancio Annuale', duration_minutes: 60, price_cents: 18000, buffer_after_minutes: 15 }
+            { id: 'c1111111', name: 'Consulenza Fiscale Iniziale', duration_minutes: 45, price_cents: 12000, price: 12000, buffer_after_minutes: 15, status: 'active' },
+            { id: 'c2222222', name: 'Revisione Bilancio Annuale', duration_minutes: 60, price_cents: 18000, price: 18000, buffer_after_minutes: 15, status: 'active' }
           ];
-          return { select: () => createChain(srvs) };
+          return { select: () => createQueryChain(srvs) };
         }
         if (table === 'professionals') {
           const profs = [
-            { id: 'b1111111', name: 'Dott. Marco Rossi', title: 'Titolare / Commercialista' },
-            { id: 'b2222222', name: 'Dott.ssa Sofia Bianchi', title: 'Esperta Contabile' }
+            { id: 'b1111111', name: 'Dott. Marco Rossi', title: 'Titolare / Commercialista', phone: '+39021234567', phone_normalized: '+39021234567', status: 'active' },
+            { id: 'b2222222', name: 'Dott.ssa Sofia Bianchi', title: 'Esperta Contabile', phone: '+39027654321', phone_normalized: '+39027654321', status: 'active' }
           ];
-          return { select: () => createChain(profs) };
+          return { select: () => createQueryChain(profs) };
         }
         if (table === 'appointments') {
           return {
-            select: () => createChain(appointmentsStore),
+            select: () => createQueryChain(appointmentsStore),
             insert: (rec: any) => {
               const item = Array.isArray(rec) ? rec[0] : rec;
-              const newApp = { ...item, id: `AG-${Date.now()}`, status: 'confirmed' };
+              const start_at = item.start_at || item.startAt;
+              const end_at = item.end_at || item.endAt;
+              const customer_id = item.customer_id || item.customerId;
+              const service_id = item.service_id || item.serviceId;
+              const professional_id = item.professional_id || item.professionalId;
+              
+              // Simulate GIST exclusion overlap check (Double booking check)
+              const conflict = appointmentsStore.find(a => 
+                a.status !== 'cancelled' &&
+                a.professional_id === professional_id &&
+                new Date(a.start_at) < new Date(end_at) &&
+                new Date(a.end_at) > new Date(start_at)
+              );
+
+              if (conflict) {
+                // Return overlapping exclusion error matching Postgres 23P01
+                const err = { code: '23P01', message: 'Exclusion constraint conflict: Double booking' };
+                return { select: () => ({ single: async () => ({ data: null, error: err }) }) };
+              }
+
+              const newApp = {
+                id: `AG-${Date.now()}`,
+                organization_id: item.organization_id || item.organizationId || '11111111-1111-1111-1111-111111111111',
+                customer_id,
+                service_id,
+                professional_id,
+                start_at,
+                end_at,
+                status: item.status || 'confirmed',
+                notes: item.notes || null,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              };
               appointmentsStore.push(newApp);
               return { select: () => ({ single: async () => ({ data: newApp, error: null }) }) };
+            },
+            update: (updatePayload: any) => {
+              let queryData = [...appointmentsStore];
+              const updateChain = {
+                eq: (col: string, val: any) => {
+                  if (col === 'organization_id') return updateChain;
+                  queryData = queryData.filter(a => a[col] === val);
+                  return updateChain;
+                },
+                select: () => ({
+                  single: async () => {
+                    if (queryData.length > 0) {
+                      // Exclusion check for updates (rescheduling conflicts)
+                      if (updatePayload.start_at) {
+                        const newStart = updatePayload.start_at;
+                        const newEnd = updatePayload.end_at;
+                        const conflict = appointmentsStore.find(a =>
+                          a.id !== queryData[0].id &&
+                          a.status !== 'cancelled' &&
+                          a.professional_id === queryData[0].professional_id &&
+                          new Date(a.start_at) < new Date(newEnd) &&
+                          new Date(a.end_at) > new Date(newStart)
+                        );
+                        if (conflict) {
+                          return { data: null, error: { code: '23P01', message: 'Exclusion constraint conflict: Double booking' } };
+                        }
+                      }
+                      Object.assign(queryData[0], updatePayload);
+                      return { data: queryData[0], error: null };
+                    }
+                    return { data: null, error: { message: 'Not found' } };
+                  }
+                }),
+                then: (fn: any) => {
+                  queryData.forEach(a => Object.assign(a, updatePayload));
+                  return fn({ data: queryData, error: null });
+                }
+              };
+              return updateChain;
             }
           };
         }
         if (table === 'conversations') {
           return {
-            select: () => createChain(conversationsStore[0] || { id: 'conv-default', status: 'active' }),
+            select: () => createQueryChain(conversationsStore),
             insert: (rec: any) => {
               const item = Array.isArray(rec) ? rec[0] : rec;
               const newConv = { ...item, id: `conv-${Date.now()}` };
@@ -171,7 +378,7 @@ describe('Bateria Completa de Testes da Chiara (Studio Aurora - v0.1.1)', () => 
         }
         if (table === 'messages') {
           return {
-            select: () => createChain(messagesStore),
+            select: () => createQueryChain(messagesStore),
             insert: (rec: any) => {
               const item = Array.isArray(rec) ? rec[0] : rec;
               const newMsg = { ...item, id: `msg-${Date.now()}` };
@@ -180,7 +387,7 @@ describe('Bateria Completa de Testes da Chiara (Studio Aurora - v0.1.1)', () => 
             }
           };
         }
-        return { select: () => createChain(null) };
+        return { select: () => createQueryChain([]) };
       }
     } as unknown as SupabaseClient;
   });
@@ -218,6 +425,9 @@ describe('Bateria Completa de Testes da Chiara (Studio Aurora - v0.1.1)', () => 
           if (!hasMatch) {
             // Check if keywords are satisfied in reply or turn metadata
             const isMatchMetadata = tc.expected.keywords.some(kw => JSON.stringify(result.metadata).toLowerCase().includes(kw.toLowerCase()));
+            if (!(hasMatch || isMatchMetadata)) {
+              console.log(`FAIL ID ${tc.id}: Input="${tc.input}" Reply="${result.replyText}" Keywords=${JSON.stringify(tc.expected.keywords)}`);
+            }
             expect(hasMatch || isMatchMetadata).toBe(true);
           }
         }
