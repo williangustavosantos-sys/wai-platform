@@ -18,7 +18,7 @@ import {
   updateService,
 } from '../../src/modules/calendar/calendar.service';
 import { createCustomer } from '../../src/modules/crm/crm.service';
-import { createBusinessException } from '../../src/modules/rules/rules.service';
+import { createBusinessException, listBusinessExceptions } from '../../src/modules/rules/rules.service';
 import { executeCheckAvailability, executeToolByName } from '../../src/modules/tools/tools.service';
 import { createConversation } from '../../src/modules/messages/messages.service';
 import { processConversationTurn } from '../../src/modules/conversation/conversation.service';
@@ -236,6 +236,9 @@ qaDescribe('WAI P1 — real pilot preparation QA', () => {
     const { data, error } = await adminClient.from('appointments').select('status').eq('id', appointmentId).single();
     expect(error).toBeNull();
     expect(data?.status).toBe('cancelled');
+    const month = getOrganizationMonth(new Date(organizationLocalDateTimeToUtc(`${rescheduleDate}T11:00:00`, 'Europe/Rome')!), 'Europe/Rome');
+    const visible = buildMonthlyCalendar(month, 'Europe/Rome', await listAppointments(organizationClient, ownerId, organizationSlug, getOrganizationMonthRange(month, 'Europe/Rome')), []);
+    expect(visible.days.flatMap((day) => day.appointments).find((appointment) => appointment.id === appointmentId)?.status).toBe('cancelled');
   });
 
   it('9. persists a business block and applies it to real availability', async () => {
@@ -250,6 +253,10 @@ qaDescribe('WAI P1 — real pilot preparation QA', () => {
     const { data, error } = await adminClient.from('closures').select('organization_id, reason').eq('id', block.data!.id).single();
     expect(error).toBeNull();
     expect(data).toMatchObject({ organization_id: organizationId, reason: `Block ${RUN_SUFFIX}` });
+    const month = getOrganizationMonth(new Date(organizationLocalDateTimeToUtc(`${blockDate}T12:00:00`, 'Europe/Rome')!), 'Europe/Rome');
+    const exceptions = await listBusinessExceptions(organizationClient, ownerId, organizationSlug, getOrganizationMonthRange(month, 'Europe/Rome'));
+    const visible = buildMonthlyCalendar(month, 'Europe/Rome', [], exceptions);
+    expect(visible.days.find((day) => day.date === blockDate)?.exceptions.some((exception) => exception.id === block.data!.id)).toBe(true);
     const availability = await executeCheckAvailability(organizationClient, ownerId, organizationSlug, { date: blockDate, serviceId, professionalId }, `${RUN_PREFIX}-availability-check`);
     expect(availability).toMatchObject({ success: true, code: 'NO_AVAILABILITY' });
   });
