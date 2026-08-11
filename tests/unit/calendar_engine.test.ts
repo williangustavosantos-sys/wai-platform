@@ -29,6 +29,15 @@ describe('Calendar Engine & Mechanical GIST Anti-Overlap Unit Tests (Fase 1)', (
       })
     } as unknown as SupabaseClient;
 
+    const ownedEntityLookup = (data: Record<string, unknown>) => {
+      const query = {
+        eq: vi.fn(),
+        single: vi.fn().mockResolvedValue({ data, error: null })
+      };
+      query.eq.mockReturnValue(query);
+      return { select: vi.fn().mockReturnValue(query) };
+    };
+
     mockUserClient = {
       from: vi.fn().mockImplementation((table: string) => {
         if (table === 'organizations') {
@@ -58,17 +67,9 @@ describe('Calendar Engine & Mechanical GIST Anti-Overlap Unit Tests (Fase 1)', (
             }))
           };
         }
-        if (table === 'services') {
-          return {
-            select: vi.fn().mockImplementation(() => ({
-              eq: vi.fn().mockImplementation(() => ({
-                eq: vi.fn().mockImplementation(() => ({
-                  single: vi.fn().mockResolvedValue({ data: { duration_minutes: 60 }, error: null })
-                }))
-              }))
-            }))
-          };
-        }
+        if (table === 'customers') return ownedEntityLookup({ id: 'cust-uuid-1' });
+        if (table === 'professionals') return ownedEntityLookup({ id: 'prof-uuid-1' });
+        if (table === 'services') return ownedEntityLookup({ id: 'srv-uuid-1', duration_minutes: 60 });
         if (table === 'platform_users') {
           return {
             select: vi.fn().mockImplementation(() => ({
@@ -82,11 +83,13 @@ describe('Calendar Engine & Mechanical GIST Anti-Overlap Unit Tests (Fase 1)', (
         }
         if (table === 'appointments') {
           return {
-            insert: vi.fn().mockImplementation((records: any[]) => {
+            insert: vi.fn().mockImplementation((records: Record<string, unknown>[]) => {
               if (shouldSimulateGistCollision) {
                 // Simulate PostgreSQL GIST exclusion constraint error (SQLSTATE 23P01)
-                const error = new Error('conflicting key value violates exclusion constraint "prevent_appointment_overlap"');
-                (error as any).code = '23P01';
+                const error = Object.assign(
+                  new Error('conflicting key value violates exclusion constraint "prevent_appointment_overlap"'),
+                  { code: '23P01' }
+                );
                 return {
                   select: vi.fn().mockReturnValue({
                     single: vi.fn().mockResolvedValue({ data: null, error })

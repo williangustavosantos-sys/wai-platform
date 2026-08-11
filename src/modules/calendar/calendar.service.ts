@@ -281,17 +281,43 @@ export async function createAppointment(
     return { success: false, code: 'PERMISSION_DENIED', error: 'Permessi insufficienti per agendare appuntamenti.' };
   }
 
-  // 1. Fetch service to ascertain duration in minutes
-  const { data: serviceRow, error: serviceError } = await client
-    .from('services')
-    .select('duration_minutes')
-    .eq('id', input.serviceId)
-    .eq('organization_id', access.organizationId)
-    .single();
+  // All referenced entities must belong to the resolved organization. Foreign
+  // keys alone do not prevent cross-tenant references when UUIDs are known.
+  const [customerResult, professionalResult, serviceResult] = await Promise.all([
+    client
+      .from('customers')
+      .select('id')
+      .eq('id', input.customerId)
+      .eq('organization_id', access.organizationId)
+      .eq('status', 'active')
+      .single(),
+    client
+      .from('professionals')
+      .select('id')
+      .eq('id', input.professionalId)
+      .eq('organization_id', access.organizationId)
+      .eq('status', 'active')
+      .single(),
+    client
+      .from('services')
+      .select('duration_minutes')
+      .eq('id', input.serviceId)
+      .eq('organization_id', access.organizationId)
+      .eq('status', 'active')
+      .single(),
+  ]);
 
-  if (serviceError || !serviceRow) {
+  if (customerResult.error || !customerResult.data) {
+    return { success: false, code: 'CUSTOMER_NOT_FOUND', error: 'Cliente non valido o non appartenente al tenant.' };
+  }
+  if (professionalResult.error || !professionalResult.data) {
+    return { success: false, code: 'PROFESSIONAL_NOT_FOUND', error: 'Professionista non valido o non appartenente al tenant.' };
+  }
+
+  if (serviceResult.error || !serviceResult.data) {
     return { success: false, code: 'SERVICE_NOT_FOUND', error: 'Servizio specificato non valido o inesistente nel tenant.' };
   }
+  const serviceRow = serviceResult.data;
 
   const startDate = new Date(input.startAt);
   if (isNaN(startDate.getTime())) {

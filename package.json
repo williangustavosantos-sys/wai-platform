@@ -10,7 +10,8 @@
     "test": "vitest",
     "test:chiara": "vitest run tests/chiara/chiara_test_runner.test.ts",
     "test:chiara:offline": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/chiara/chiara_test_runner.test.ts",
-    "test:scenarios:offline": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/chiara/real_conversation_scenarios.test.ts"
+    "test:scenarios:offline": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/chiara/real_conversation_scenarios.test.ts",
+    "test:supabase:qa": "RUN_REAL_SUPABASE_QA=true vitest run tests/chiara/real_supabase_qa.test.ts --reporter=verbose"
   },
   "dependencies": {
     "@ai-sdk/google": "0.0.55",

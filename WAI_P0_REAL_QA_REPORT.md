@@ -71,15 +71,13 @@ O que permanece, explicitamente fora da contagem E2E P0:
 
 ## 8. Validação real do Supabase
 
-**BLOCKED.** Não houve conexão, leitura ou escrita em Supabase.
+**PASS — 11/11.** A validação foi executada exclusivamente no projeto QA `crlftiwjpplrqidjvpaj`, com `.env.test` local ignorado pelo Git e sem expor credenciais.
 
-Foram procuradas apenas as chaves dedicadas e sem revelar valores:
-
-- `CHIARA_QA_SUPABASE_URL`: ausente.
-- `CHIARA_QA_SUPABASE_SERVICE_ROLE_KEY`: ausente.
-- `CHIARA_QA_ALLOW_WRITES`: ausente.
-
-As credenciais genéricas existentes não foram reutilizadas, pois não comprovam que apontam para o projeto QA autorizado. Para a validação real ainda são necessárias credenciais QA nomeadas, autorização explícita de escrita e confirmação de que o projeto é isolado.
+- A leitura inicial confirmou a organização esperada e a compatibilidade das tabelas usadas pelo WAI Core.
+- A primeira execução passou 10/11 e revelou um defeito real: `createAppointment` aceitava um `customer_id` pertencente a outro tenant.
+- O serviço passou a validar cliente, profissional e serviço ativos dentro da organização resolvida antes da inserção.
+- A repetição passou 11/11, incluindo read-back, GIST real, cancelamento, liberação de slot, reagendamento, ownership, isolamento de aplicação, RLS autenticado e conversa completa.
+- A limpeza pós-teste restaurou o baseline: 1 organização QA, 10 clientes, 32 agendamentos, zero conversas, mensagens, audits e usuários Auth temporários.
 
 ## 9. Testes modificados ou consolidados
 
@@ -87,18 +85,74 @@ As credenciais genéricas existentes não foram reutilizadas, pois não comprova
 - SCEN-006 e SCEN-020 foram corrigidos para representar a regra real de escolha de profissional, em vez de aceitar criação incompleta.
 - A fixture em memória passou a respeitar filtros usados pelo cliente Supabase e timestamps são comparados por instante, não por formatação local.
 - `gemini_fallback_validation.test.ts` foi criado como teste real, opt-in e sem mutação de banco.
+- `real_supabase_qa.test.ts` foi criado como suíte real opt-in, com prefixo exclusivo, sessões Auth temporárias para RLS e cleanup restrito aos IDs do run.
+- `calendar_engine.test.ts` passou a representar as validações de ownership dos identificadores usadas pelo calendário.
 - O teste de integração legado `phase_2_conversation_flow.test.ts` ainda espera `BOOK_APPOINTMENT`; o contrato moderno devolve `CREATE_APPOINTMENT`. Ele falha 1/17 na bateria de serviços por essa asserção legada e não foi alterado para mascarar a incompatibilidade.
 
 ## 10. Bloqueadores restantes
 
-1. Fornecer `CHIARA_QA_SUPABASE_URL`, `CHIARA_QA_SUPABASE_SERVICE_ROLE_KEY` e `CHIARA_QA_ALLOW_WRITES=true` para executar o percurso real com leitura, escrita e reload no banco QA isolado.
-2. Atualizar ou retirar os testes/rotas legados OpenAI (`mockedLLMRouter` e expectativa `BOOK_APPOINTMENT`) em trabalho separado de compatibilidade.
-3. Corrigir a dívida global de lint fora do escopo P0 antes de usar lint global como gate de release.
+Não há bloqueador restante para a validação do WAI Core P0. Permanecem fora deste escopo:
+
+1. Atualizar ou retirar os testes/rotas legados OpenAI (`mockedLLMRouter` e expectativa `BOOK_APPOINTMENT`) em trabalho separado de compatibilidade.
+2. Corrigir a dívida global de lint antes de usar lint global como gate de release.
+3. Executar preparação operacional de piloto e aceite humano como fase posterior separada.
 
 ## 11. Nível de confiança QA
 
-**MEDIUM.** O núcleo determinístico e o fallback Gemini foram executados com sucesso; falta a prova de persistência real, RLS e leitura pós-escrita no Supabase QA dedicado.
+**HIGH.** O núcleo determinístico, a persistência real, o constraint GIST, cancelamento/reagendamento, isolamento de cliente/tenant, RLS autenticado e o caminho completo de conversa foram comprovados no Supabase QA isolado.
 
 ## 12. Status do piloto
 
-**READY FOR REAL SUPABASE VALIDATION.** Não está autorizado como piloto controlado até a etapa de banco real isolado ser concluída com evidência de leitura e escrita.
+**CORE VALIDATED / PILOT PREPARATION NEXT.** Esta evidência valida o WAI Core; não substitui preparação operacional nem aceite humano de um piloto controlado.
+
+## REAL SUPABASE QA VALIDATION
+
+Branch de validação: `codex-p0-real-supabase`
+
+LOCAL CORE:
+30/30
+
+REAL SUPABASE:
+11/11
+
+CUSTOMER CREATE + READ:
+PASS
+
+BOOKING + READ:
+PASS
+
+DOUBLE BOOKING / REAL GIST:
+PASS — PostgreSQL `23P01` do constraint `prevent_appointment_overlap`, traduzido pelo WAI para `SLOT_OCCUPIED`.
+
+CANCELLATION:
+PASS
+
+CANCELLED SLOT RELEASE:
+PASS
+
+RESCHEDULING:
+PASS
+
+OLD SLOT RELEASE:
+PASS
+
+CUSTOMER OWNERSHIP:
+PASS — tentativa de terceiro bloqueada antes de tool/mutação e status original confirmado por read-back.
+
+APPLICATION TENANT ISOLATION:
+PASS — acesso sem membership e referência de cliente de outro tenant foram rejeitados pelo WAI Core.
+
+RLS POLICY VALIDATION:
+PASS — sessões `authenticated` temporárias de tenants distintos observaram somente suas próprias linhas; tentativa cross-tenant de update retornou zero linhas e não alterou o registro.
+
+FULL CONVERSATION → REAL DB:
+PASS — `processConversationTurn` executou roteador local, tool, calendar service, escrita do agendamento, read-back, persistência das mensagens de cliente/assistente e resposta final.
+
+GEMINI FALLBACK:
+1/1
+
+QA TRUST LEVEL:
+HIGH
+
+CORE STATUS:
+CORE VALIDATED / PILOT PREPARATION NEXT
