@@ -6,8 +6,6 @@ import { WebChatAdapter } from '../../src/modules/conversation/webchat_adapter';
 import { SupabaseClient } from '@supabase/supabase-js';
 
 // Activating Test Mode
-process.env.CHIARA_TEST_MODE = 'true';
-
 interface TestCase {
   id: string;
   category: 'novo_agendamento' | 'cliente_existente' | 'seguranca_identidade' | 'agenda' | 'informacoes' | 'erros_linguagem';

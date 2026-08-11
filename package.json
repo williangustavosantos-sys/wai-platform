@@ -13,7 +13,7 @@
     "test:scenarios:offline": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/chiara/real_conversation_scenarios.test.ts"
   },
   "dependencies": {
-    "@ai-sdk/google": "^4.0.39",
+    "@ai-sdk/google": "0.0.55",
     "@ai-sdk/openai": "^0.0.38",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.111.0",

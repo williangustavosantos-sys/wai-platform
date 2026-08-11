@@ -57,6 +57,8 @@ export interface GetBusinessRulesInput {
 
 export interface ToolExecutionResponse {
   success: boolean;
+  code?: string;
+  appointmentId?: string;
   result?: unknown;
   error?: string;
   isGistOverlapError?: boolean;

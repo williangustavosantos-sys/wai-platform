@@ -163,11 +163,17 @@ export async function executeCheckAvailability(
       .single();
 
     if (orgErr || !orgData) {
-      return { success: false, error: 'Organizzazione non trovata.' };
+      return { success: false, code: 'ORGANIZATION_NOT_FOUND', error: 'Organizzazione non trovata.' };
     }
     const timezone = orgData.timezone || 'Europe/Rome';
 
-    // 2. Resolve professional and service
+    // 2. A date is required before asking the user to choose a service or professional.
+    const requestedDate = input.date || input.startDate;
+    if (!requestedDate) {
+      return { success: false, code: 'DATE_REQUIRED', error: 'Data mancante.' };
+    }
+
+    // 3. Resolve professional and service
     const professionals = await listProfessionals(client, userId, organizationSlug);
     const services = await listServices(client, userId, organizationSlug);
 
@@ -187,8 +193,10 @@ export async function executeCheckAvailability(
           } else {
             return { 
               success: true, 
+              code: 'SERVICE_SELECTION_REQUIRED',
               result: { 
-                message: 'Quale servizio desideri prenotare?',
+            code: 'SERVICE_SELECTION_REQUIRED',
+            message: 'Quale servizio desideri prenotare?',
                 requiresServiceSelection: true,
                 services: services.map(s => ({ id: s.id, name: s.name, duration: s.durationMinutes }))
               } 
@@ -198,7 +206,9 @@ export async function executeCheckAvailability(
       } else {
         return { 
           success: true, 
+          code: 'SERVICE_SELECTION_REQUIRED',
           result: { 
+            code: 'SERVICE_SELECTION_REQUIRED',
             message: 'Specifica il servizio per verificare la disponibilità.',
             requiresServiceSelection: true,
             services: services.map(s => ({ id: s.id, name: s.name, duration: s.durationMinutes }))
@@ -208,7 +218,7 @@ export async function executeCheckAvailability(
     }
     
     const targetService = services.find(s => s.id === input.serviceId);
-    if (!targetService) return { success: false, error: 'Servizio non trovato.' };
+    if (!targetService) return { success: false, code: 'SERVICE_NOT_FOUND', error: 'Servizio non trovato.' };
 
     let targetProfs = [];
     if (!input.professionalId) {
@@ -217,7 +227,9 @@ export async function executeCheckAvailability(
       } else {
         return { 
           success: true, 
+          code: 'PROFESSIONAL_SELECTION_REQUIRED',
           result: { 
+            code: 'PROFESSIONAL_SELECTION_REQUIRED',
             message: 'Specifica il professionista per verificare la disponibilità.',
             requiresProfessionalSelection: true,
             service: { id: targetService.id, name: targetService.name },
@@ -230,7 +242,7 @@ export async function executeCheckAvailability(
     } else {
       const p = professionals.find(p => p.id === input.professionalId);
       if (p) targetProfs.push(p);
-      else return { success: false, error: 'Professionista non trovato.' };
+      else return { success: false, code: 'PROFESSIONAL_NOT_FOUND', error: 'Professionista non trovato.' };
     }
 
     const duration = targetService.durationMinutes;
@@ -242,15 +254,13 @@ export async function executeCheckAvailability(
     let startD = input.date || input.startDate;
     let endD = input.date || input.endDate || startD;
 
-    if (!startD || !endD) {
-      return { success: false, error: 'Data mancante.' };
-    }
+    if (!startD || !endD) return { success: false, code: 'DATE_REQUIRED', error: 'Data mancante.' };
 
     const reqStartDate = new Date(`${startD}T00:00:00Z`);
     const reqEndDate = new Date(`${endD}T00:00:00Z`);
     
     if (isNaN(reqStartDate.getTime()) || isNaN(reqEndDate.getTime())) {
-      return { success: false, error: 'Data fornita non valida (usa YYYY-MM-DD).' };
+      return { success: false, code: 'INVALID_DATE', error: 'Data fornita non valida (usa YYYY-MM-DD).' };
     }
 
     // Limit to 30 days max
@@ -412,14 +422,15 @@ export async function executeCheckAvailability(
     }
 
     if (input.date) {
-      return { success: true, result: results[0] || { availableSlots: [] } };
+      const result = results[0] || { availableSlots: [] };
+      return { success: true, code: result.availableSlots.length > 0 ? 'AVAILABILITY_FOUND' : 'NO_AVAILABILITY', result };
     }
     
-    return { success: true, result: { days: results } };
+    return { success: true, code: results.some(day => day.availableSlots.length > 0) ? 'AVAILABILITY_FOUND' : 'NO_AVAILABILITY', result: { days: results } };
 
   } catch (err: unknown) {
      logger.error('Errore durante il controllo della disponibilità', { error: err instanceof Error ? err.stack || err.message : String(err) });
-    return { success: false, error: 'Errore interno nel controllo disponibilità' };
+    return { success: false, code: 'AVAILABILITY_CHECK_FAILED', error: 'Errore interno nel controllo disponibilità' };
   }
 }
 
@@ -446,19 +457,55 @@ export async function executeToolByName(
         const customers = await listCustomers(client, userId, organizationSlug);
         const normPhone = normalizePhoneNumber(args.phone).normalized;
         const cust = customers.find(c => c.phoneNormalized === normPhone);
-        if (cust) return { success: true, result: { customer: cust } };
-        return { success: false, error: 'Customer not found' };
+        if (cust) {
+          const appointments = await listAppointments(client, userId, organizationSlug);
+          const customerAppointments = appointments.filter(appointment => appointment.customerId === cust.id);
+          return {
+            success: true,
+            code: args.queryType === 'customer_appointments' ? 'CUSTOMER_APPOINTMENTS_FOUND' : 'CUSTOMER_FOUND',
+            result: { customer: cust, appointments: customerAppointments }
+          };
+        }
+        return { success: false, code: 'CUSTOMER_NOT_FOUND', error: 'Customer not found' };
       case 'createCustomer':
         const created = await crmCreateCustomer(client, adminClient, userId, organizationSlug, args, 'tool-call');
-        return { success: true, result: { customer: created.data } };
+        return created.success
+          ? { success: true, code: 'CUSTOMER_CREATED', result: { customer: created.data } }
+          : { success: false, code: 'CUSTOMER_CREATE_FAILED', error: created.error };
       case 'createAppointment':
-        return await calendarCreateAppointment(client, adminClient, userId, organizationSlug, args, 'tool-call');
+        {
+          const createdAppointment = await calendarCreateAppointment(client, adminClient, userId, organizationSlug, args, correlationId || 'tool-call');
+          return {
+            success: createdAppointment.success,
+            code: createdAppointment.code,
+            appointmentId: createdAppointment.appointmentId,
+            result: createdAppointment.data ? { appointment: createdAppointment.data } : undefined,
+            error: createdAppointment.error,
+            isGistOverlapError: createdAppointment.isGistOverlapError,
+          };
+        }
       case 'cancelAppointment':
-        return await updateAppointmentStatus(client, adminClient, userId, organizationSlug, args.appointmentId, 'cancelled', null, 'tool-call');
+        {
+          const cancelled = await updateAppointmentStatus(client, adminClient, userId, organizationSlug, args.appointmentId, 'cancelled', null, correlationId || 'tool-call');
+          return { success: cancelled.success, code: cancelled.code, appointmentId: cancelled.appointmentId, error: cancelled.error };
+        }
       case 'rescheduleAppointment':
-        return await rescheduleAppointment(client, adminClient, userId, organizationSlug, args.appointmentId, args.newStartAt, correlationId || 'tool-call');
+        {
+          const rescheduled = await rescheduleAppointment(client, adminClient, userId, organizationSlug, args.appointmentId, args.newStartAt, correlationId || 'tool-call');
+          return {
+            success: rescheduled.success,
+            code: rescheduled.code,
+            appointmentId: rescheduled.appointmentId,
+            result: rescheduled.data ? { appointment: rescheduled.data } : undefined,
+            error: rescheduled.error,
+            isGistOverlapError: rescheduled.isGistOverlapError,
+          };
+        }
       case 'getCompanyInformation':
-        return await executeGetCompanyInformation(client, userId, organizationSlug);
+        {
+          const information = await executeGetCompanyInformation(client, userId, organizationSlug);
+          return { ...information, code: information.success ? 'COMPANY_INFORMATION_FOUND' : information.code };
+        }
       case 'ownerListAgenda':
         return await executeOwnerListAgenda(client, userId, organizationSlug, args.date);
       case 'ownerBlockCalendar':
@@ -468,11 +515,11 @@ export async function executeToolByName(
       case 'ownerGetStats':
         return await executeOwnerGetStats(client, userId, organizationSlug, args.date);
       default:
-        return { success: false, error: 'Unknown tool' };
+        return { success: false, code: 'UNKNOWN_TOOL', error: 'Unknown tool' };
     }
   } catch(e: any) {
     logger.error('Error executing tool', { toolName, error: e });
-    return { success: false, error: e.message || 'Error executing tool' };
+    return { success: false, code: 'TOOL_EXECUTION_FAILED', error: e.message || 'Error executing tool' };
   }
 }
 
@@ -554,7 +601,7 @@ async function executeOwnerGetStats(client: any, userId: string, organizationSlu
         confirmed: filtered.filter(a => a.status === 'confirmed').length,
         cancelled: filtered.filter(a => a.status === 'cancelled').length,
         held: filtered.filter(a => a.status === 'held').length,
-        pending: filtered.filter(a => a.status === 'pending').length,
+        pending: 0,
       }
     }
   };

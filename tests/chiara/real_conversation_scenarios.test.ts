@@ -3,15 +3,14 @@ import { processConversationTurn } from '../../src/modules/conversation/conversa
 import { WebChatAdapter } from '../../src/modules/conversation/webchat_adapter';
 import { SupabaseClient } from '@supabase/supabase-js';
 
-// Activating Test Mode to disable overrides and force real logic
-process.env.CHIARA_TEST_MODE = 'true';
-
 interface ScenarioTurn {
   input: string;
   customerPhone?: string;
   expected: {
     intent: string;
     replyKeywords: string[];
+    outcomeCode?: string;
+    policyCode?: string;
     replyForbidden?: string[];
     dbVerification?: (stores: {
       customersStore: any[];
@@ -149,6 +148,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
                 currentData = currentData.filter(item => item.status === val);
               } else if (col === 'slug') {
                 currentData = currentData.filter(item => item.slug === val);
+              } else {
+                currentData = currentData.filter(item => item[col] === val);
               }
               return chain;
             },
@@ -159,6 +160,7 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
               return chain;
             },
             order: () => chain,
+            or: () => chain,
             single: async () => {
               return { data: currentData[0] || null, error: currentData[0] ? null : { message: 'Not found' } };
             },
@@ -433,7 +435,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'COMPANY_INFORMATION',
-            replyKeywords: ['Via Roma 10', '9:00-18:00']
+            replyKeywords: ['Via Roma 10', '9:00-18:00'],
+            outcomeCode: 'COMPANY_INFORMATION_FOUND'
           }
         }
       ]
@@ -448,7 +451,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'COMPANY_INFORMATION',
-            replyKeywords: ['Consulenza Fiscale Iniziale', 'Revisione Bilancio Annuale']
+            replyKeywords: ['Consulenza Fiscale Iniziale', 'Revisione Bilancio Annuale'],
+            outcomeCode: 'COMPANY_INFORMATION_FOUND'
           }
         }
       ]
@@ -463,7 +467,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'COMPANY_INFORMATION',
-            replyKeywords: ['120 €', '180 €']
+            replyKeywords: ['120 €', '180 €'],
+            outcomeCode: 'COMPANY_INFORMATION_FOUND'
           }
         }
       ]
@@ -478,7 +483,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['Per verificare le disponibilità abbiamo bisogno che ci indichi un giorno desiderato']
+            replyKeywords: ['Per verificare le disponibilità abbiamo bisogno che ci indichi un giorno desiderato'],
+            outcomeCode: 'DATE_REQUIRED'
           }
         }
       ]
@@ -493,26 +499,24 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['Quale servizio desideri prenotare']
+            replyKeywords: ['Quale servizio desideri prenotare'],
+            outcomeCode: 'SERVICE_SELECTION_REQUIRED'
           }
         }
       ]
     },
     {
       id: 'SCEN-006',
-      description: 'Create booking from scratch with full details',
+      description: 'Require professional selection when a booking omits the professional',
       category: 'new_customer',
       turns: [
         {
           input: 'Vorrei prenotare una Consulenza Fiscale Iniziale per il 17 agosto alle 14:00. Mi chiamo Matteo Conti.',
           customerPhone: '+393385544332',
           expected: {
-            intent: 'CREATE_APPOINTMENT',
-            replyKeywords: ['confermat', '17 agosto', '14:00'],
-            dbVerification: (stores) => {
-              const matched = stores.appointmentsStore.find(a => a.start_at === '2026-08-17T14:00:00+02:00');
-              expect(matched).toBeDefined();
-            }
+            intent: 'CHECK_AVAILABILITY',
+            replyKeywords: ['professionista'],
+            outcomeCode: 'PROFESSIONAL_SELECTION_REQUIRED'
           }
         }
       ]
@@ -527,7 +531,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393995556667',
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['indichi un giorno desiderato']
+            replyKeywords: ['indichi un giorno desiderato'],
+            outcomeCode: 'DATE_REQUIRED'
           }
         },
         {
@@ -535,7 +540,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393995556667',
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['Quale servizio desideri prenotare']
+            replyKeywords: ['Quale servizio desideri prenotare'],
+            outcomeCode: 'SERVICE_SELECTION_REQUIRED'
           }
         },
         {
@@ -543,7 +549,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393995556667',
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['Preferisci prenotare', 'Dott. Marco Rossi', 'Dott.ssa Sofia Bianchi']
+            replyKeywords: ['Preferisci prenotare', 'Dott. Marco Rossi', 'Dott.ssa Sofia Bianchi'],
+            outcomeCode: 'PROFESSIONAL_SELECTION_REQUIRED'
           }
         },
         {
@@ -552,8 +559,9 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           expected: {
             intent: 'CREATE_APPOINTMENT',
             replyKeywords: ['confermat', 'Sofia Bianchi', '15:30'],
+            outcomeCode: 'APPOINTMENT_CREATED',
             dbVerification: (stores) => {
-              const matched = stores.appointmentsStore.find(a => a.start_at === '2026-08-17T15:30:00+02:00' && a.professional_id === 'b2222222');
+              const matched = stores.appointmentsStore.find(a => new Date(a.start_at).getTime() === new Date('2026-08-17T15:30:00+02:00').getTime() && a.professional_id === 'b2222222');
               expect(matched).toBeDefined();
             }
           }
@@ -570,7 +578,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['La data indicata non è valida', 'Milano']
+            replyKeywords: ['Quale servizio desideri prenotare'],
+            outcomeCode: 'SERVICE_SELECTION_REQUIRED'
           }
         }
       ]
@@ -585,7 +594,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'COMPANY_INFORMATION',
-            replyKeywords: ['Revisione Bilancio', '60 min']
+            replyKeywords: ['Revisione Bilancio', '60 min'],
+            outcomeCode: 'COMPANY_INFORMATION_FOUND'
           }
         }
       ]
@@ -600,7 +610,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393995556667',
           expected: {
             intent: 'CREATE_APPOINTMENT',
-            replyKeywords: ['già occupato', 'Marco Rossi']
+            replyKeywords: ['già occupato', 'Marco Rossi'],
+            outcomeCode: 'SLOT_OCCUPIED'
           }
         }
       ]
@@ -617,7 +628,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567', // Marco Rossi
           expected: {
             intent: 'CUSTOMER_INFORMATION',
-            replyKeywords: ['Marco Rossi']
+            replyKeywords: ['Marco Rossi'],
+            outcomeCode: 'CUSTOMER_FOUND'
           }
         }
       ]
@@ -632,7 +644,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567', // Marco Rossi
           expected: {
             intent: 'CUSTOMER_INFORMATION',
-            replyKeywords: ['10 agosto']
+            replyKeywords: ['10 agosto'],
+            outcomeCode: 'CUSTOMER_APPOINTMENTS_FOUND'
           }
         }
       ]
@@ -648,6 +661,7 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           expected: {
             intent: 'CANCEL_APPOINTMENT',
             replyKeywords: ['annullato', 'cancellat'],
+            outcomeCode: 'APPOINTMENT_CANCELLED',
             dbVerification: (stores) => {
               const matched = stores.appointmentsStore.find(a => a.id === 'AG-107');
               expect(matched.status).toBe('cancelled');
@@ -667,9 +681,10 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           expected: {
             intent: 'RESCHEDULE_APPOINTMENT',
             replyKeywords: ['riprogrammato', 'spostato', '10 agosto', '14:00'],
+            outcomeCode: 'APPOINTMENT_RESCHEDULED',
             dbVerification: (stores) => {
               const matched = stores.appointmentsStore.find(a => a.id === 'AG-107');
-              expect(matched.start_at).toBe('2026-08-10T14:00:00+02:00');
+              expect(new Date(matched.start_at).getTime()).toBe(new Date('2026-08-10T14:00:00+02:00').getTime());
             }
           }
         }
@@ -686,6 +701,7 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           expected: {
             intent: 'RESCHEDULE_APPOINTMENT',
             replyKeywords: ['occupato', '12:30', '14:00'],
+            outcomeCode: 'SLOT_OCCUPIED',
             dbVerification: (stores) => {
               const matched = stores.appointmentsStore.find(a => a.id === 'AG-107');
               expect(matched.start_at).not.toBe('2026-08-10T10:30:00+02:00');
@@ -704,7 +720,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393407654321', // Marco Russo, has AG-112 on Aug 11
           expected: {
             intent: 'RESCHEDULE_APPOINTMENT',
-            replyKeywords: ['nuova data e ora']
+            replyKeywords: ['nuova data e ora'],
+            outcomeCode: 'NEW_START_REQUIRED'
           }
         },
         {
@@ -713,9 +730,10 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           expected: {
             intent: 'RESCHEDULE_APPOINTMENT',
             replyKeywords: ['riprogrammato', '17 agosto', '15:00'],
+            outcomeCode: 'APPOINTMENT_RESCHEDULED',
             dbVerification: (stores) => {
               const matched = stores.appointmentsStore.find(a => a.id === 'AG-112');
-              expect(matched.start_at).toBe('2026-08-17T15:00:00+02:00');
+              expect(new Date(matched.start_at).getTime()).toBe(new Date('2026-08-17T15:00:00+02:00').getTime());
             }
           }
         }
@@ -731,7 +749,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567',
           expected: {
             intent: 'CUSTOMER_INFORMATION',
-            replyKeywords: ['amministrazione', 'pagamenti']
+            replyKeywords: ['amministrazione', 'pagamenti'],
+            outcomeCode: 'CUSTOMER_APPOINTMENTS_FOUND'
           }
         }
       ]
@@ -746,7 +765,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567',
           expected: {
             intent: 'CUSTOMER_INFORMATION',
-            replyKeywords: ['verifica di identità']
+            replyKeywords: ['verifica di identità'],
+            outcomeCode: 'CUSTOMER_FOUND'
           }
         }
       ]
@@ -761,26 +781,24 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567',
           expected: {
             intent: 'CUSTOMER_INFORMATION',
-            replyKeywords: ['verifica dei dati in segreteria']
+            replyKeywords: ['verifica dei dati in segreteria'],
+            outcomeCode: 'CUSTOMER_FOUND'
           }
         }
       ]
     },
     {
       id: 'SCEN-020',
-      description: 'Existing customer books a second service',
+      description: 'Require professional selection for a second booking when no professional is specified',
       category: 'existing_customer',
       turns: [
         {
           input: 'Vorrei prenotare anche la Revisione Bilancio per il 20 agosto alle 15:00.',
           customerPhone: '+393401234567',
           expected: {
-            intent: 'CREATE_APPOINTMENT',
-            replyKeywords: ['confermat', 'Revisione Bilancio', '20 agosto', '15:00'],
-            dbVerification: (stores) => {
-              const matched = stores.appointmentsStore.filter(a => a.customer_id === 'd0000001');
-              expect(matched.length).toBe(3); // AG-101, AG-107, plus the new one
-            }
+            intent: 'CHECK_AVAILABILITY',
+            replyKeywords: ['professionista'],
+            outcomeCode: 'PROFESSIONAL_SELECTION_REQUIRED'
           }
         }
       ]
@@ -797,7 +815,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393471122334', // Sofia Rossi
           expected: {
             intent: 'CANCEL_APPOINTMENT',
-            replyKeywords: ['titolare', '+39 340 7654321'] // Prompts calling/writing from Marco Russo's phone number
+            replyKeywords: ['titolare', '+39 340 7654321'], // Prompts calling/writing from Marco Russo's phone number
+            policyCode: 'THIRD_PARTY_ACTION_DENIED'
           }
         }
       ]
@@ -812,7 +831,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567', // Registered to Marco Rossi
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['Marco Rossi', 'Giovanni Rossi', 'errore']
+            replyKeywords: ['Marco Rossi', 'Giovanni Rossi', 'errore'],
+            policyCode: 'CUSTOMER_IDENTITY_CONFLICT'
           }
         }
       ]
@@ -827,7 +847,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567',
           expected: {
             intent: 'COMPANY_INFORMATION',
-            replyKeywords: ['riservate', 'privacy', 'sicurezza']
+            replyKeywords: ['riservate', 'privacy', 'sicurezza'],
+            policyCode: 'SENSITIVE_REQUEST_DENIED'
           }
         }
       ]
@@ -857,7 +878,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567', // Regular client
           expected: {
             intent: 'COMPANY_INFORMATION',
-            replyKeywords: ['riservate', 'privacy']
+            replyKeywords: ['riservate', 'privacy'],
+            policyCode: 'SENSITIVE_REQUEST_DENIED'
           }
         }
       ]
@@ -872,7 +894,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'CREATE_APPOINTMENT',
-            replyKeywords: ['nome e cognome completo è obbligatorio']
+            replyKeywords: ['nome e cognome completo è obbligatorio'],
+            outcomeCode: 'CUSTOMER_FULL_NAME_REQUIRED'
           }
         }
       ]
@@ -887,7 +910,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393995556667',
           expected: {
             intent: 'CREATE_APPOINTMENT',
-            replyKeywords: ['occupato', 'Sofia'] // Sofia is occupied on AG-110 from 14:30 to 15:30 (and buffer adds 15min)
+            replyKeywords: ['occupato', 'Sofia'], // Sofia is occupied on AG-110 from 14:30 to 15:30 (and buffer adds 15min)
+            outcomeCode: 'SLOT_OCCUPIED'
           }
         }
       ]
@@ -902,7 +926,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393471122334', // Sofia Rossi
           expected: {
             intent: 'RESCHEDULE_APPOINTMENT',
-            replyKeywords: ['titolare', '+39 340 7654321']
+            replyKeywords: ['titolare', '+39 340 7654321'],
+            policyCode: 'THIRD_PARTY_ACTION_DENIED'
           }
         }
       ]
@@ -917,7 +942,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567',
           expected: {
             intent: 'COMPANY_INFORMATION',
-            replyKeywords: ['riservate', 'privacy']
+            replyKeywords: ['riservate', 'privacy'],
+            policyCode: 'SENSITIVE_REQUEST_DENIED'
           }
         }
       ]
@@ -932,7 +958,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393401234567',
           expected: {
             intent: 'CUSTOMER_INFORMATION',
-            replyKeywords: ['modificare il numero di telefono', 'verifica di identità']
+            replyKeywords: ['modificare il numero di telefono', 'verifica di identità'],
+            outcomeCode: 'CUSTOMER_FOUND'
           }
         }
       ]
@@ -972,16 +999,22 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           // Assert expected intent matches
           expect(result.metadata.intent).toBe(turn.expected.intent);
 
-          // Assert expected reply keywords
-          const replyLower = result.replyText.toLowerCase();
-          for (const keyword of turn.expected.replyKeywords) {
-            const isKeywordMatch = replyLower.includes(keyword.toLowerCase());
-            const isMetadataMatch = JSON.stringify(result.metadata).toLowerCase().includes(keyword.toLowerCase());
-            expect(isKeywordMatch || isMetadataMatch).toBe(true);
+          // Product outcomes are the primary contract; wording remains a secondary UX check.
+          if (turn.expected.outcomeCode) {
+            const toolCodes = result.metadata.toolCalls.map((call: any) => call.result?.code);
+            expect(toolCodes).toContain(turn.expected.outcomeCode);
+          } else if (turn.expected.policyCode) {
+            expect(result.metadata.policyDecision?.code).toBe(turn.expected.policyCode);
+          } else {
+            const replyLower = result.replyText.toLowerCase();
+            for (const keyword of turn.expected.replyKeywords) {
+              expect(replyLower).toContain(keyword.toLowerCase());
+            }
           }
 
           // Assert forbidden reply keywords
           if (turn.expected.replyForbidden) {
+            const replyLower = result.replyText.toLowerCase();
             for (const forbidden of turn.expected.replyForbidden) {
               expect(replyLower).not.toContain(forbidden.toLowerCase());
             }

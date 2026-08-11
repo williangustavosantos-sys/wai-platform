@@ -273,12 +273,12 @@ export async function listAppointments(client: SupabaseClient, userId: string, o
 export async function createAppointment(
   client: SupabaseClient, adminClient: SupabaseClient, userId: string, organizationSlug: string,
   input: CreateAppointmentInput, correlationId: string, logger?: Logger
-): Promise<{ success: boolean; data?: Appointment; error?: string }> {
+): Promise<{ success: boolean; code: string; appointmentId?: string; data?: Appointment; error?: string; isGistOverlapError?: boolean }> {
   const log = logger || new Logger({ correlationId, userId, organizationSlug });
   const access = await verifyOrganizationAccess(client, userId, organizationSlug, log);
 
   if (!access || (access.role !== 'organization_owner' && access.role !== 'organization_operator')) {
-    return { success: false, error: 'Permessi insufficienti per agendare appuntamenti.' };
+    return { success: false, code: 'PERMISSION_DENIED', error: 'Permessi insufficienti per agendare appuntamenti.' };
   }
 
   // 1. Fetch service to ascertain duration in minutes
@@ -290,12 +290,12 @@ export async function createAppointment(
     .single();
 
   if (serviceError || !serviceRow) {
-    return { success: false, error: 'Servizio specificato non valido o inesistente nel tenant.' };
+    return { success: false, code: 'SERVICE_NOT_FOUND', error: 'Servizio specificato non valido o inesistente nel tenant.' };
   }
 
   const startDate = new Date(input.startAt);
   if (isNaN(startDate.getTime())) {
-    return { success: false, error: 'Data e ora di inizio non valide.' };
+    return { success: false, code: 'INVALID_START_TIME', error: 'Data e ora di inizio non valide.' };
   }
 
   const durationMs = serviceRow.duration_minutes * 60 * 1000;
@@ -323,10 +323,12 @@ export async function createAppointment(
     if (error?.code === '23P01') {
       return { 
         success: false, 
+        code: 'SLOT_OCCUPIED',
+        isGistOverlapError: true,
         error: 'Conflitto di orario (Double-Booking bloccato meccanicamente). Il professionista selezionato è già impegnato in un appuntamento confermato nel periodo indicato.' 
       };
     }
-    return { success: false, error: `Impossibile agendare l'appuntamento: ${error?.message || 'Errore DB'}` };
+    return { success: false, code: 'APPOINTMENT_CREATE_FAILED', error: `Impossibile agendare l'appuntamento: ${error?.message || 'Errore DB'}` };
   }
 
   await recordAuditLog({
@@ -338,6 +340,8 @@ export async function createAppointment(
   log.info('Appointment scheduled cleanly and checked against GIST anti-overlap constraint', { id: created.id });
   return {
     success: true,
+    code: 'APPOINTMENT_CREATED',
+    appointmentId: created.id,
     data: {
       id: created.id, organizationId: created.organization_id, customerId: created.customer_id,
       serviceId: created.service_id, professionalId: created.professional_id,
@@ -355,12 +359,12 @@ export async function updateAppointmentStatus(
   client: SupabaseClient, adminClient: SupabaseClient, userId: string, organizationSlug: string,
   appointmentId: string, newStatus: AppointmentStatus, cancellationReason: string | null,
   correlationId: string, logger?: Logger
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; code: string; appointmentId?: string; error?: string }> {
   const log = logger || new Logger({ correlationId, userId, organizationSlug });
   const access = await verifyOrganizationAccess(client, userId, organizationSlug, log);
 
   if (!access || (access.role !== 'organization_owner' && access.role !== 'organization_operator')) {
-    return { success: false, error: 'Permessi insufficienti.' };
+    return { success: false, code: 'PERMISSION_DENIED', error: 'Permessi insufficienti.' };
   }
 
   const { data: existing, error: fetchErr } = await client
@@ -370,7 +374,7 @@ export async function updateAppointmentStatus(
     .eq('organization_id', access.organizationId)
     .single();
 
-  if (fetchErr || !existing) return { success: false, error: 'Appuntamento non trovato nel tenant.' };
+  if (fetchErr || !existing) return { success: false, code: 'APPOINTMENT_NOT_FOUND', error: 'Appuntamento non trovato nel tenant.' };
 
   const updatePayload: Record<string, unknown> = { status: newStatus };
   if (newStatus === 'cancelled' && cancellationReason) {
@@ -383,7 +387,7 @@ export async function updateAppointmentStatus(
     .eq('id', appointmentId)
     .eq('organization_id', access.organizationId);
 
-  if (error) return { success: false, error: `Impossibile aggiornare lo stato: ${error.message}` };
+  if (error) return { success: false, code: 'APPOINTMENT_STATUS_UPDATE_FAILED', error: `Impossibile aggiornare lo stato: ${error.message}` };
 
   await recordAuditLog({
     organizationId: access.organizationId, actorUserId: userId, actorType: 'user',
@@ -391,18 +395,18 @@ export async function updateAppointmentStatus(
     beforeData: { status: existing.status }, afterData: updatePayload, correlationId,
   }, adminClient, log);
 
-  return { success: true };
+  return { success: true, code: `APPOINTMENT_${newStatus.toUpperCase()}`, appointmentId };
 }
 
 export async function rescheduleAppointment(
   client: SupabaseClient, adminClient: SupabaseClient, userId: string, organizationSlug: string,
   appointmentId: string, newStartAt: string, correlationId: string, logger?: Logger
-): Promise<{ success: boolean; data?: Appointment; error?: string }> {
+): Promise<{ success: boolean; code: string; appointmentId?: string; data?: Appointment; error?: string; isGistOverlapError?: boolean }> {
   const log = logger || new Logger({ correlationId, userId, organizationSlug });
   const access = await verifyOrganizationAccess(client, userId, organizationSlug, log);
 
   if (!access || (access.role !== 'organization_owner' && access.role !== 'organization_operator')) {
-    return { success: false, error: 'Permessi insufficienti per riprogrammare appuntamenti.' };
+    return { success: false, code: 'PERMISSION_DENIED', error: 'Permessi insufficienti per riprogrammare appuntamenti.' };
   }
 
   // 1. Fetch existing appointment to get service_id, professional_id, status, etc.
@@ -414,7 +418,7 @@ export async function rescheduleAppointment(
     .single();
 
   if (fetchErr || !existing) {
-    return { success: false, error: 'Appuntamento non trovato.' };
+    return { success: false, code: 'APPOINTMENT_NOT_FOUND', error: 'Appuntamento non trovato.' };
   }
 
   // 2. Fetch service to get duration_minutes
@@ -426,12 +430,12 @@ export async function rescheduleAppointment(
     .single();
 
   if (serviceError || !serviceRow) {
-    return { success: false, error: 'Servizio dell\'appuntamento non valido.' };
+    return { success: false, code: 'SERVICE_NOT_FOUND', error: 'Servizio dell\'appuntamento non valido.' };
   }
 
   const startDate = new Date(newStartAt);
   if (isNaN(startDate.getTime())) {
-    return { success: false, error: 'Nuova data e ora di inizio non valida.' };
+    return { success: false, code: 'INVALID_START_TIME', error: 'Nuova data e ora di inizio non valida.' };
   }
 
   const durationMs = serviceRow.duration_minutes * 60 * 1000;
@@ -462,10 +466,12 @@ export async function rescheduleAppointment(
     if (updateError?.code === '23P01') {
       return { 
         success: false, 
+        code: 'SLOT_OCCUPIED',
+        isGistOverlapError: true,
         error: 'Conflitto di orario (Double-Booking bloccato meccanicamente). Il professionista selezionato è già impegnato in un appuntamento confermato nel periodo indicato.' 
       };
     }
-    return { success: false, error: `Impossibile spostare l'appuntamento: ${updateError?.message || 'Errore DB'}` };
+    return { success: false, code: 'APPOINTMENT_RESCHEDULE_FAILED', error: `Impossibile spostare l'appuntamento: ${updateError?.message || 'Errore DB'}` };
   }
 
   await recordAuditLog({
@@ -476,6 +482,8 @@ export async function rescheduleAppointment(
 
   return {
     success: true,
+    code: 'APPOINTMENT_RESCHEDULED',
+    appointmentId: updated.id,
     data: {
       id: updated.id, organizationId: updated.organization_id, customerId: updated.customer_id,
       serviceId: updated.service_id, professionalId: updated.professional_id,

@@ -13,6 +13,9 @@ export interface AIProviderTurnOutput {
 export interface ToolResultSummary {
   toolName: string;
   success: boolean;
+  code?: string;
+  appointmentId?: string;
+  args?: Record<string, unknown>;
   result?: unknown;
   error?: string;
   isGistOverlapError?: boolean;
