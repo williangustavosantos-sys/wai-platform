@@ -17,7 +17,7 @@
     "access_module": "Accedi al modulo",
     "modules": {
       "assistant_title": "1. Collaboratore Digitale",
-      "assistant_desc": "Configurazione nome (es. Chiara), personalità, tono di comunicazione ed avatar WAI.",
+      "assistant_desc": "Configurazione del nome, della personalità, del tono di comunicazione e dell’avatar del Digital Employee.",
       "crm_title": "2. CRM Clientela",
       "crm_desc": "Anagrafica clienti con convalida telematica standard E.164 e registro dei consensi marketing.",
       "calendar_title": "3. Motore di Agenda WAI",
@@ -41,7 +41,7 @@
   },
   "settings_form": {
     "display_name_label": "Nome Visualizzato (Display Name)",
-    "display_name_placeholder": "es. Studio Aurora Commercialisti",
+    "display_name_placeholder": "es. La tua azienda",
     "org_language_label": "Lingua Predefinita Organizzazione (Clientela)",
     "theme_label": "Tema Interfaccia (Preferenza)",
     "theme_institutional": "Istituzionale Scuro (Default)",
@@ -71,7 +71,7 @@
     "status_inactive": "⚪ Disattivato",
     "form_title": "Impostazioni Operative (Fase 1)",
     "name_label": "Nome del Collaboratore Digitale",
-    "name_placeholder": "es. Chiara, Marco, Giulia...",
+    "name_placeholder": "es. Sofia, Alex, Giulia...",
     "tone_select_label": "Tono di Comunicazione",
     "tone_cordial": "Cordiale ed Empatico (Consigliato)",
     "tone_formal": "Formale e Istituzionale",

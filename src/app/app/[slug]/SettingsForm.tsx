@@ -5,6 +5,7 @@ import { updateSettingsAction } from './actions';
 
 interface Props {
   organizationSlug: string;
+  organizationName: string;
   initialSettings: Record<string, unknown>;
   locale?: string;
   dict: {
@@ -21,7 +22,7 @@ interface Props {
   };
 }
 
-export function SettingsForm({ organizationSlug, initialSettings, locale, dict }: Props) {
+export function SettingsForm({ organizationSlug, organizationName, initialSettings, locale, dict }: Props) {
   const [status, setStatus] = useState<{ error?: string; success?: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -54,16 +55,37 @@ export function SettingsForm({ organizationSlug, initialSettings, locale, dict }
       )}
 
       <div className="wai-form-group">
-        <label className="wai-label" htmlFor="displayName">{dict.display_name_label}</label>
+        <label className="wai-label" htmlFor="businessName">Nome dell’azienda</label>
         <input
-          id="displayName"
-          name="displayName"
+          id="businessName"
+          name="businessName"
           type="text"
           className="wai-input"
-          defaultValue={(initialSettings?.displayName || initialSettings?.display_name || '') as string}
+          defaultValue={organizationName || ((initialSettings?.displayName || initialSettings?.display_name || '') as string)}
           placeholder={dict.display_name_placeholder}
           required
+          disabled={isPending}
         />
+      </div>
+
+      <div className="wai-form-group">
+        <label className="wai-label" htmlFor="address">Indirizzo / sede</label>
+        <input id="address" name="address" type="text" className="wai-input" defaultValue={(initialSettings?.address || '') as string} disabled={isPending} />
+      </div>
+
+      <div className="wai-form-group">
+        <label className="wai-label" htmlFor="phone">Telefono</label>
+        <input id="phone" name="phone" type="tel" className="wai-input" defaultValue={(initialSettings?.phone || '') as string} disabled={isPending} />
+      </div>
+
+      <div className="wai-form-group">
+        <label className="wai-label" htmlFor="email">Email</label>
+        <input id="email" name="email" type="email" className="wai-input" defaultValue={(initialSettings?.email || '') as string} disabled={isPending} />
+      </div>
+
+      <div className="wai-form-group">
+        <label className="wai-label" htmlFor="workingHours">Orari di apertura</label>
+        <textarea id="workingHours" name="workingHours" className="wai-input" style={{ minHeight: '84px', resize: 'vertical' }} defaultValue={(initialSettings?.working_hours || initialSettings?.workingHours || '') as string} disabled={isPending} />
       </div>
 
       <div className="wai-form-group">
@@ -75,7 +97,7 @@ export function SettingsForm({ organizationSlug, initialSettings, locale, dict }
           defaultValue={locale || 'it-IT'}
           disabled={isPending}
         >
-          <option value="it-IT">🇮🇹 Italiano (Italia - Padrão Studio Aurora)</option>
+          <option value="it-IT">🇮🇹 Italiano</option>
           <option value="pt-BR">🇧🇷 Português (Brasil)</option>
         </select>
       </div>
@@ -87,6 +109,7 @@ export function SettingsForm({ organizationSlug, initialSettings, locale, dict }
           name="themePreference"
           className="wai-select"
           defaultValue={(initialSettings?.themePreference || 'institutional') as string}
+          disabled={isPending}
         >
           <option value="institutional">{dict.theme_institutional}</option>
           <option value="balanced">{dict.theme_balanced}</option>

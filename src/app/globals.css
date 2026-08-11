@@ -210,6 +210,61 @@ a:hover {
   color: #6ee7b7;
 }
 
+.wai-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-left: 1px solid var(--border-color);
+  border-top: 1px solid var(--border-color);
+}
+
+.wai-month-weekdays > div {
+  padding: 0.55rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.wai-month-day {
+  min-height: 8.5rem;
+  padding: 0.45rem;
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.wai-month-day-outside { opacity: 0.43; }
+.wai-month-day-number { color: var(--text-muted); font-size: 0.8rem; font-weight: 700; }
+.wai-month-appointment, .wai-month-block {
+  border: 0;
+  border-radius: 4px;
+  padding: 0.3rem;
+  text-align: left;
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
+.wai-month-appointment { background: rgba(59, 130, 246, 0.22); color: #bfdbfe; cursor: pointer; }
+.wai-month-appointment-cancelled { background: rgba(239, 68, 68, 0.18); color: #fecaca; text-decoration: line-through; }
+.wai-month-appointment-completed { background: rgba(16, 185, 129, 0.18); color: #a7f3d0; }
+.wai-month-block { background: rgba(245, 158, 11, 0.2); color: #fde68a; }
+.wai-dialog-backdrop { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.72); display: grid; place-items: center; padding: 1rem; }
+.wai-details-dialog { width: min(100%, 34rem); margin: 0; position: relative; }
+.wai-dialog-close { position: absolute; right: 1rem; top: 1rem; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+.wai-details-actions { display: grid; gap: 0.65rem; margin-top: 1.25rem; }
+.wai-button-danger { background: var(--danger-color); }
+
+@media (max-width: 700px) {
+  .wai-container { padding: 1rem; }
+  .wai-navbar { padding: .8rem 1rem; gap: .75rem; align-items: flex-start; }
+  .wai-month-day { min-height: 5.25rem; padding: .25rem; overflow: hidden; }
+  .wai-month-appointment, .wai-month-block { font-size: .61rem; padding: .2rem; }
+  .wai-month-weekdays > div { font-size: .63rem; padding: .35rem .1rem; }
+}
+
 /* =========================================================
    WAI Chat Simulator (Pure CSS Design System)
    ========================================================= */
@@ -784,5 +839,4 @@ a:hover {
     padding: 0.75rem 1.2rem;
   }
 }
-
 

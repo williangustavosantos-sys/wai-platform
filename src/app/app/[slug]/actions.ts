@@ -6,7 +6,11 @@ import { updateOrganizationSettings } from '@/modules/organizations/organization
 import { revalidatePath } from 'next/cache';
 
 export async function updateSettingsAction(organizationSlug: string, formData: FormData) {
-  const displayName = formData.get('displayName') as string;
+  const businessName = formData.get('businessName') as string;
+  const address = (formData.get('address') as string) || '';
+  const phone = (formData.get('phone') as string) || '';
+  const email = (formData.get('email') as string) || '';
+  const workingHours = (formData.get('workingHours') as string) || '';
   const themePreference = (formData.get('themePreference') as 'institutional' | 'balanced' | 'cool') || 'institutional';
   const locale = (formData.get('locale') as string) || 'it-IT';
   const correlationId = crypto.randomUUID();
@@ -25,7 +29,7 @@ export async function updateSettingsAction(organizationSlug: string, formData: F
     adminClient,
     session.userId,
     organizationSlug,
-    { displayName, themePreference, locale },
+    { businessName, address, phone, email, workingHours, themePreference, locale },
     correlationId
   );
 
@@ -33,6 +37,6 @@ export async function updateSettingsAction(organizationSlug: string, formData: F
     return { error: result.error };
   }
 
-  revalidatePath(`/app/${organizationSlug}`);
-  return { success: true, message: 'Impostazioni aggiornate con successo e registrate nel registro di audizione (Audit Log).' };
+  revalidatePath(`/app/${organizationSlug}`, 'layout');
+  return { success: true, message: 'Configurazione aziendale aggiornata e registrata nell’Audit Log.' };
 }

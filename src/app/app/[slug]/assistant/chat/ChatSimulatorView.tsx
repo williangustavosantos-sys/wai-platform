@@ -9,6 +9,9 @@ import { COUNTRY_DIAL_CODES, findCountryByCode } from '@/modules/shared/country-
 
 interface ChatSimulatorViewProps {
   organizationSlug: string;
+  organizationName: string;
+  digitalEmployeeName: string;
+  avatarPlaceholderUrl: string;
 }
 
 interface TelemetryLogItem {
@@ -20,7 +23,7 @@ interface TelemetryLogItem {
   timestamp: string;
 }
 
-export default function ChatSimulatorView({ organizationSlug }: ChatSimulatorViewProps) {
+export default function ChatSimulatorView({ organizationSlug, organizationName, digitalEmployeeName, avatarPlaceholderUrl }: ChatSimulatorViewProps) {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [inputText, setInputText] = useState('');
@@ -43,15 +46,7 @@ export default function ChatSimulatorView({ organizationSlug }: ChatSimulatorVie
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const studioDisplayName = organizationSlug === 'studio-aurora' ? 'Studio Aurora' :
-                            organizationSlug === 'studio-brera' ? 'Studio Brera' :
-                            organizationSlug.replace('-', ' ').toUpperCase();
-
-  const assistantName = organizationSlug === 'studio-aurora' ? 'Chiara' :
-                        organizationSlug === 'studio-brera' ? 'Marco' :
-                        'Assistente WAI';
-
-  const assistantInitial = assistantName.charAt(0).toUpperCase();
+  const assistantInitial = digitalEmployeeName.charAt(0).toUpperCase() || 'W';
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -214,13 +209,13 @@ export default function ChatSimulatorView({ organizationSlug }: ChatSimulatorVie
         {/* Header do chat */}
         <header className="wai-chat-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <div className="wai-chat-avatar">
+            <div className="wai-chat-avatar" data-avatar-placeholder={avatarPlaceholderUrl}>
               {assistantInitial}
             </div>
             <div className="wai-chat-header-info">
-              <h2 className="wai-chat-header-title">{assistantName}</h2>
+              <h2 className="wai-chat-header-title">{digitalEmployeeName}</h2>
               <span className="wai-chat-header-role">Assistente Digitale</span>
-              <span className="wai-chat-header-org">{studioDisplayName}</span>
+              <span className="wai-chat-header-org">{organizationName}</span>
             </div>
           </div>
           <button 
@@ -779,4 +774,3 @@ export default function ChatSimulatorView({ organizationSlug }: ChatSimulatorVie
     </div>
   );
 }
-

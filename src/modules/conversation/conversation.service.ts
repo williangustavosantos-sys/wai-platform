@@ -9,7 +9,8 @@ import { ToolResultSummary } from '@/modules/ai/ai.types';
 import { executeToolByName, DEFINED_TOOLS } from '@/modules/tools/tools.service';
 import { listServices, listProfessionals } from '@/modules/calendar/calendar.service';
 import { listCustomers, normalizePhoneNumber } from '@/modules/crm/crm.service';
-import { ConversationTurnResult, ChannelAdapter, ToolCallTelemetry } from './conversation.types';
+import { verifyOrganizationAccess } from '@/security/auth';
+import { ConversationTurnResult, ChannelAdapter, ToolCallTelemetry, TrustedConversationContext } from './conversation.types';
 
 function workflowEntities(entities: RoutedEntities): NonNullable<ConversationWorkflow['entities']> {
   const {
@@ -70,10 +71,18 @@ export async function processConversationTurn(
   organizationSlug: string,
   channelAdapter: ChannelAdapter,
   rawPayload: unknown,
-  correlationId: string
+  correlationId: string,
+  trustedContext?: TrustedConversationContext,
 ): Promise<ConversationTurnResult> {
   const startTime = Date.now();
   const logger = new Logger({ correlationId, userId, organizationSlug });
+
+  // The Core always reconstructs the tenant and role from the authenticated
+  // client. A channel payload never grants staff capability.
+  const access = await verifyOrganizationAccess(client, userId, organizationSlug, logger);
+  if (!access) {
+    throw new Error('Accesso negato al tenant specificato per la conversazione.');
+  }
 
   // 1. Adapter decodifica payload e normaliza dados de entrada
   const messageData = await channelAdapter.receiveMessage(rawPayload);
@@ -118,16 +127,8 @@ export async function processConversationTurn(
   const customers = await listCustomers(client, userId, organizationSlug);
 
   const normPhone = messageData.customerPhone ? messageData.customerPhone.replace(/\D/g, '') : '';
-  const matchedProf = normPhone ? professionals.find(p => {
-    const pPhone = ((p as any).phoneNormalized || (p as any).phone || '').replace(/\D/g, '');
-    return pPhone && pPhone === normPhone;
-  }) : null;
-  const isOwner = Boolean(matchedProf && (
-    matchedProf.id.startsWith('b1111111') ||
-    (matchedProf as any).title?.toLowerCase().includes('titolare') ||
-    (matchedProf as any).title?.toLowerCase().includes('admin') ||
-    (matchedProf as any).title?.toLowerCase().includes('owner')
-  )) || messageData.customerPhone === '+39021234567';
+  const isOrganizationStaff = trustedContext?.source === 'organization_workspace'
+    && (access.role === 'organization_owner' || access.role === 'organization_operator');
 
   const verifiedCustomer = normPhone ? customers.find(c => {
     const cPhone = (c.phoneNormalized || '').replace(/\D/g, '');
@@ -135,12 +136,12 @@ export async function processConversationTurn(
   }) : undefined;
 
   const baseContext: AIProviderContext = {
-    organization: { timezone: 'Europe/Rome' },
+    organization: { timezone: access.timezone },
     services,
     professionals,
     customers,
     customer: verifiedCustomer,
-    isOwner
+    isOwner: isOrganizationStaff
   };
   const currentMessageIndex = history.map(message => message.role === 'customer' && message.content === messageData.text).lastIndexOf(true);
   const workflowHistory = currentMessageIndex >= 0 ? history.slice(0, currentMessageIndex) : history;
@@ -159,14 +160,14 @@ export async function processConversationTurn(
 
   if (localRoute.confidence > 0.8 && !localRoute.needsClarification) {
     logger.info('Local intent router matched with high confidence', { intent: localRoute.intent, confidence: localRoute.confidence });
-    rawToolCalls = localRouter.convertToToolCalls(localRoute);
+    rawToolCalls = localRouter.convertToToolCalls(localRoute, access.timezone);
   } else if (isOfflineMode) {
     logger.info('Offline AI mode active or API key missing, using local deterministic fallback directly', {
       intent: localRoute.intent,
       reason: localRoute.needsClarification ? 'clarification_needed' : 'low_confidence'
     });
     detectedIntent = localRoute.intent;
-    rawToolCalls = localRouter.convertToToolCalls(localRoute);
+    rawToolCalls = localRouter.convertToToolCalls(localRoute, access.timezone);
     aiProviderUsed = false;
   } else {
     logger.info('Falling back to Gemini AI provider', { reason: localRoute.needsClarification ? 'clarification_needed' : 'low_confidence' });
@@ -187,7 +188,7 @@ export async function processConversationTurn(
     } catch (error) {
       logger.error('Gemini AI Provider failed, falling back to local deterministic mapping', { error });
       detectedIntent = localRoute.intent;
-      rawToolCalls = localRouter.convertToToolCalls(localRoute);
+      rawToolCalls = localRouter.convertToToolCalls(localRoute, access.timezone);
       aiProviderUsed = false;
     }
   }
@@ -380,11 +381,11 @@ export async function processConversationTurn(
     } catch (e) {
       logger.error('Gemini AI Provider failed generating reply, falling back to deterministic', { error: e });
       const deterministicGen = new DeterministicResponseGenerator();
-      finalReply = deterministicGen.generateReply(detectedIntent, toolResults, localRoute.entities, messageData.text);
+      finalReply = deterministicGen.generateReply(detectedIntent, toolResults, localRoute.entities, messageData.text, access.timezone);
     }
   } else {
     const deterministicGen = new DeterministicResponseGenerator();
-    finalReply = deterministicGen.generateReply(detectedIntent, toolResults, localRoute.entities, messageData.text);
+    finalReply = deterministicGen.generateReply(detectedIntent, toolResults, localRoute.entities, messageData.text, access.timezone);
   }
 
   const processingTimeMs = Date.now() - startTime;

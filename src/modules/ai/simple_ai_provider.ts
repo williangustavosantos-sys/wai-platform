@@ -215,8 +215,8 @@ export class SimpleAIProvider implements AIProvider {
     _history?: ConversationMessage[],
     bookingDraft?: Record<string, any>
   ): Promise<string> {
-    const assistantName = config?.name || 'Chiara';
-    const studioName = organizationSlug === 'studio-aurora' ? 'Studio Aurora' : 'Studio Brera';
+    const assistantName = config?.name || 'Digital Employee';
+    const organizationName = 'la tua organizzazione';
     
     // Resolve serviceId and serviceName from checkAvailability results if present
     if (bookingDraft) {
@@ -234,7 +234,7 @@ export class SimpleAIProvider implements AIProvider {
     }
     
     if (intent === 'HUMAN_HANDOFF') {
-      return `Ho inviato la segnalazione al personale di ${studioName}. Un operatore ti risponderà appena disponibile.`;
+      return `Ho inviato la segnalazione al personale di ${organizationName}. Un operatore ti risponderà appena disponibile.`;
     }
     if (intent === 'CANCEL_APPOINTMENT') {
        return `Procedo subito alla verifica e all'annullamento del tuo appuntamento...`;
@@ -292,6 +292,6 @@ export class SimpleAIProvider implements AIProvider {
     }
 
     if (draftReply) return draftReply;
-    return `Ciao! Sono ${assistantName} di ${studioName}. Posso aiutarti a trovare un orario disponibile per la tua visita oppure gestire un appuntamento esistente. Come vorresti procedere?`;
+    return `Ciao! Sono ${assistantName}. Posso aiutarti a trovare un orario disponibile per la tua visita oppure gestire un appuntamento esistente. Come vorresti procedere?`;
   }
 }

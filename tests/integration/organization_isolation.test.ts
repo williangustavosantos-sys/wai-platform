@@ -63,6 +63,7 @@ describe('Multi-tenant Integration & Isolation Tests (Phase 0 Requirements)', ()
               eq: vi.fn().mockImplementation((field: string, idVal: string) => {
                 const slug = Object.keys(orgsStore).find(k => orgsStore[k].id === idVal);
                 if (slug) {
+                  orgsStore[slug].name = updates.name;
                   orgsStore[slug].settings_json = updates.settings_json;
                   return Promise.resolve({ error: null });
                 }
@@ -109,21 +110,22 @@ describe('Multi-tenant Integration & Isolation Tests (Phase 0 Requirements)', ()
     } as unknown as SupabaseClient;
   });
 
-  it('Owner A can successfully update Studio Aurora settings and generates exactly ONE audit log', async () => {
+  it('Owner A writes the canonical organization name without rewriting the legacy displayName and generates exactly ONE audit log', async () => {
     const result = await updateOrganizationSettings(
       mockUserClient,
       mockAdminClient,
       'owner-a-id',
       'studio-aurora',
-      { displayName: 'Studio Aurora V2', themePreference: 'institutional' },
+      { businessName: 'Studio Aurora V2', themePreference: 'institutional', workingHours: 'Lun-Ven 09:00 - 18:00' },
       'corr-test-001'
     );
 
     expect(result.success).toBe(true);
+    expect(orgsStore['studio-aurora'].name).toBe('Studio Aurora V2');
     expect(orgsStore['studio-aurora'].settings_json).toEqual({
       display_name: 'Studio Aurora',
-      displayName: 'Studio Aurora V2',
       themePreference: 'institutional',
+      working_hours: 'Lun-Ven 09:00 - 18:00',
     });
 
     // Verify audit logs

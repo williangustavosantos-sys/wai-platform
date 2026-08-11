@@ -2,12 +2,12 @@ import { Intent } from '../conversation/conversation.types';
 import { ToolResultSummary } from './ai.types';
 import { RoutedEntities } from './local_intent_router';
 
-function formatItalianDateTime(value?: unknown): string {
+function formatItalianDateTime(value?: unknown, timezone = 'Europe/Rome'): string {
   if (typeof value !== 'string' || !value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('it-IT', {
-    timeZone: 'Europe/Rome',
+    timeZone: timezone,
     day: 'numeric',
     month: 'long',
     hour: '2-digit',
@@ -39,6 +39,7 @@ export class DeterministicResponseGenerator {
     toolResults: ToolResultSummary[],
     entities?: RoutedEntities,
     userText?: string,
+    timezone = 'Europe/Rome',
   ): string {
     if (entities?.potentiallyDangerous) {
       return 'Queste informazioni sono riservate. Per privacy e sicurezza non posso eseguire questa richiesta.';
@@ -129,14 +130,14 @@ export class DeterministicResponseGenerator {
       }
       case 'createAppointment': {
         const appointment = asRecord(data.appointment);
-        const when = formatItalianDateTime(appointment.startAt || appointment.start_at || actionable.args?.startAt);
+        const when = formatItalianDateTime(appointment.startAt || appointment.start_at || actionable.args?.startAt, timezone);
         return when ? `Prenotazione confermata per il ${when}.` : 'Prenotazione confermata.';
       }
       case 'cancelAppointment':
         return 'L’appuntamento è stato cancellato e lo slot è di nuovo disponibile.';
       case 'rescheduleAppointment': {
         const appointment = asRecord(data.appointment);
-        const when = formatItalianDateTime(appointment.startAt || appointment.start_at || actionable.args?.newStartAt);
+        const when = formatItalianDateTime(appointment.startAt || appointment.start_at || actionable.args?.newStartAt, timezone);
         return when ? `L’appuntamento è stato riprogrammato per il ${when}.` : 'L’appuntamento è stato riprogrammato.';
       }
       case 'getCompanyInformation': {
@@ -166,7 +167,7 @@ export class DeterministicResponseGenerator {
         const name = [customer.firstName, customer.lastName].filter(Boolean).join(' ');
         if (actionable.code === 'CUSTOMER_APPOINTMENTS_FOUND') {
           if (!appointments.length) return name ? `${name}, non risultano appuntamenti attivi.` : 'Non risultano appuntamenti attivi.';
-          const summary = appointments.slice(0, 3).map((appointment) => formatItalianDateTime(appointment.startAt)).filter(Boolean).join(', ');
+          const summary = appointments.slice(0, 3).map((appointment) => formatItalianDateTime(appointment.startAt, timezone)).filter(Boolean).join(', ');
           return `${name || 'Il tuo profilo'}: appuntamenti registrati il ${summary}.`;
         }
         return name ? `Ho trovato il profilo di ${name}. Come posso aiutarti?` : 'Ho trovato il profilo associato al recapito.';

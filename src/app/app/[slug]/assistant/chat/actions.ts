@@ -1,7 +1,7 @@
 'use server';
 
 import { createServerClient, createAdminClient } from '@/db/server';
-import { getCurrentSession } from '@/security/auth';
+import { getCurrentSession, verifyOrganizationAccess } from '@/security/auth';
 import { processConversationTurn } from '@/modules/conversation/conversation.service';
 import { WebChatAdapter } from '@/modules/conversation/webchat_adapter';
 import { listConversations, listMessages, createConversation } from '@/modules/messages/messages.service';
@@ -20,6 +20,11 @@ export async function sendChatMessageAction(
     return { error: 'Sessione scaduta o utente non autenticato.' };
   }
 
+  const access = await verifyOrganizationAccess(supabase, session.userId, organizationSlug);
+  if (!access) {
+    return { error: 'Accesso negato a questa organizzazione.' };
+  }
+
   const adminClient = createAdminClient();
   const adapter = new WebChatAdapter();
 
@@ -31,7 +36,8 @@ export async function sendChatMessageAction(
       organizationSlug,
       adapter,
       { conversationId, text },
-      correlationId
+      correlationId,
+      { source: 'organization_workspace' },
     );
 
     revalidatePath(`/app/${organizationSlug}/assistant/chat`);

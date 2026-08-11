@@ -30,6 +30,14 @@ export interface ConversationTurnResult {
   metadata?: Record<string, any>;
 }
 
+/**
+ * Server-only provenance for messages sent from an authenticated organization
+ * workspace. It is intentionally not part of any channel payload.
+ */
+export interface TrustedConversationContext {
+  source: 'organization_workspace';
+}
+
 export interface ChannelAdapter {
   readonly channelName: ConversationChannel;
   receiveMessage(payload: unknown): Promise<{ conversationId?: string; customerPhone?: string; text: string }>;

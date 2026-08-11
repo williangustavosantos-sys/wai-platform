@@ -66,11 +66,11 @@ export async function getAssistantConfig(
     log.info('No assistant config found. Creating initial default configuration.', { orgId: access.organizationId });
     const defaultInsert = {
       organization_id: access.organizationId,
-      name: 'Chiara',
+      name: 'Digital Employee',
       personality_summary: 'Assistente professionale, cordiale ed efficiente per la gestione operativa e comunicativa.',
       language: 'it-IT',
       communication_tone: 'cordial_empathic',
-      avatar_placeholder_url: '/avatars/chiara.svg',
+      avatar_placeholder_url: '/avatars/default.svg',
       is_default: true,
       status: 'active',
       settings_json: {},

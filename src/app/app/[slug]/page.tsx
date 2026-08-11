@@ -138,7 +138,7 @@ export default async function TenantWorkspacePage({ params }: Props) {
           <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
             {dict.dashboard.settings_card.desc}
           </p>
-          <SettingsForm organizationSlug={access.organizationSlug} initialSettings={access.settingsJson} locale={access.locale} dict={dict.settings_form} />
+          <SettingsForm organizationSlug={access.organizationSlug} organizationName={access.organizationName} initialSettings={access.settingsJson} locale={access.locale} dict={dict.settings_form} />
         </div>
       </div>
     </div>

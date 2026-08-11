@@ -3,10 +3,15 @@
 import React, { useState, useTransition } from 'react';
 import { Service, Professional, AvailableTimeSlot, Appointment, AppointmentStatus } from '@/modules/calendar/calendar.types';
 import { Customer } from '@/modules/crm/crm.types';
+import { BusinessException } from '@/modules/rules/rules.types';
 import { 
   createServiceAction, createProfessionalAction, createTimeSlotAction, 
-  createAppointmentAction, updateAppointmentStatusAction 
+  createAppointmentAction, updateAppointmentStatusAction, updateServiceAction,
+  updateProfessionalAction, createBusinessBlockAction,
 } from './actions';
+import { buildMonthlyCalendar } from './calendar-view-model';
+import { MonthlyCalendar } from './MonthlyCalendar';
+import { AppointmentDetailsDialog } from './AppointmentDetailsDialog';
 
 interface Props {
   organizationSlug: string;
@@ -14,12 +19,15 @@ interface Props {
   professionals: Professional[];
   timeSlots: AvailableTimeSlot[];
   appointments: Appointment[];
+  exceptions: BusinessException[];
   customers: Customer[];
+  month: string;
+  timezone: string;
   readOnly?: boolean;
 }
 
 export function CalendarView({ 
-  organizationSlug, services, professionals, timeSlots, appointments, customers, readOnly = false 
+  organizationSlug, services, professionals, timeSlots, appointments, exceptions, customers, month, timezone, readOnly = false
 }: Props) {
   const [activeTab, setActiveTab] = useState<'appointments' | 'services' | 'professionals'>('appointments');
   const [status, setStatus] = useState<{ error?: string; success?: string } | null>(null);
@@ -32,6 +40,13 @@ export function CalendarView({
   const [showAddTimeSlot, setShowAddTimeSlot] = useState(false);
   const [cancelModalAppointmentId, setCancelModalAppointmentId] = useState<string | null>(null);
   const [cancellationReasonInput, setCancellationReasonInput] = useState('');
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [showBusinessBlock, setShowBusinessBlock] = useState(false);
+  const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
+  const [editingProfessionalId, setEditingProfessionalId] = useState<string | null>(null);
+  const monthlyModel = buildMonthlyCalendar(month, timezone, appointments, exceptions);
+  const activeServices = services.filter((service) => service.status === 'active');
+  const activeProfessionals = professionals.filter((professional) => professional.status === 'active');
 
   const handleCreateAppointment = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -106,6 +121,47 @@ export function CalendarView({
     });
   };
 
+  const handleUpdateService = (serviceId: string, formData: FormData) => {
+    if (readOnly) return;
+    setStatus(null);
+    startTransition(async () => {
+      const res = await updateServiceAction(organizationSlug, serviceId, formData);
+      if (res.error) setStatus({ error: res.error });
+      else if (res.success) {
+        setStatus({ success: res.message });
+        setEditingServiceId(null);
+      }
+    });
+  };
+
+  const handleUpdateProfessional = (professionalId: string, formData: FormData) => {
+    if (readOnly) return;
+    setStatus(null);
+    startTransition(async () => {
+      const res = await updateProfessionalAction(organizationSlug, professionalId, formData);
+      if (res.error) setStatus({ error: res.error });
+      else if (res.success) {
+        setStatus({ success: res.message });
+        setEditingProfessionalId(null);
+      }
+    });
+  };
+
+  const handleCreateBusinessBlock = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (readOnly) return;
+    setStatus(null);
+    const formData = new FormData(event.currentTarget);
+    startTransition(async () => {
+      const res = await createBusinessBlockAction(organizationSlug, formData);
+      if (res.error) setStatus({ error: res.error });
+      else if (res.success) {
+        setStatus({ success: res.message });
+        setShowBusinessBlock(false);
+      }
+    });
+  };
+
   const getDayName = (day: number) => {
     const days = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
     return days[day] || 'Sconosciuto';
@@ -158,13 +214,29 @@ export function CalendarView({
       {activeTab === 'appointments' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h3 style={{ margin: 0, color: '#E2E8F0' }}>Registro Appuntamenti del Tenant</h3>
-            {!readOnly && !showAddAppointment && (
-              <button className="wai-button" onClick={() => setShowAddAppointment(true)}>
-                + Agendare Nuovo Appuntamento
-              </button>
+            <h3 style={{ margin: 0, color: '#E2E8F0' }}>Calendario mensile</h3>
+            {!readOnly && (
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                {!showBusinessBlock && <button type="button" className="wai-button wai-button-secondary" onClick={() => setShowBusinessBlock(true)}>Blocca periodo</button>}
+                {!showAddAppointment && <button className="wai-button" onClick={() => setShowAddAppointment(true)}>+ Nuovo appuntamento</button>}
+              </div>
             )}
           </div>
+
+          <MonthlyCalendar model={monthlyModel} timezone={timezone} onSelectAppointment={setSelectedAppointment} />
+
+          {showBusinessBlock && (
+            <div className="wai-card" style={{ marginTop: '1.5rem', border: '1px solid #F59E0B' }}>
+              <h4 style={{ marginBottom: '1rem' }}>Blocca un giorno o un periodo</h4>
+              <form onSubmit={handleCreateBusinessBlock} style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem' }}>
+                <div className="wai-form-group"><label className="wai-label" htmlFor="blockStart">Inizio</label><input id="blockStart" name="startAt" type="datetime-local" className="wai-input" required disabled={isPending} /></div>
+                <div className="wai-form-group"><label className="wai-label" htmlFor="blockEnd">Fine</label><input id="blockEnd" name="endAt" type="datetime-local" className="wai-input" required disabled={isPending} /></div>
+                <div className="wai-form-group"><label className="wai-label" htmlFor="blockReason">Motivo</label><input id="blockReason" name="reason" className="wai-input" required disabled={isPending} /></div>
+                <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', gridColumn: 'span 2' }}><input name="isFullDay" type="checkbox" value="true" /> Intera giornata</label>
+                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}><button type="button" className="wai-button wai-button-secondary" onClick={() => setShowBusinessBlock(false)}>Annulla</button><button type="submit" className="wai-button" disabled={isPending}>Salva blocco</button></div>
+              </form>
+            </div>
+          )}
 
           {showAddAppointment && (
             <div className="wai-card" style={{ marginBottom: '2rem', border: '1px solid #3B82F6', background: 'rgba(59, 130, 246, 0.05)' }}>
@@ -183,16 +255,16 @@ export function CalendarView({
                 </div>
                 <div className="wai-form-group">
                   <label className="wai-label">Servizio Richiesto *</label>
-                  <select name="serviceId" className="wai-select" required disabled={isPending || services.length === 0}>
+                  <select name="serviceId" className="wai-select" required disabled={isPending || activeServices.length === 0}>
                     <option value="">Seleziona servizio...</option>
-                    {services.map(s => <option key={s.id} value={s.id}>{s.name} ({s.durationMinutes} min - {s.price ? `€${s.price}` : 'Gratis'})</option>)}
+                    {activeServices.map(s => <option key={s.id} value={s.id}>{s.name} ({s.durationMinutes} min - {s.price !== null ? `€${(s.price / 100).toFixed(2)}` : 'Su preventivo'})</option>)}
                   </select>
                 </div>
                 <div className="wai-form-group">
                   <label className="wai-label">Professionista Assegnato *</label>
-                  <select name="professionalId" className="wai-select" required disabled={isPending || professionals.length === 0}>
+                  <select name="professionalId" className="wai-select" required disabled={isPending || activeProfessionals.length === 0}>
                     <option value="">Seleziona professionista...</option>
-                    {professionals.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {activeProfessionals.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
                 <div className="wai-form-group">
@@ -205,7 +277,7 @@ export function CalendarView({
                   <input name="notes" type="text" className="wai-input" placeholder="es. Preferenza sala silenziosa..." disabled={isPending} />
                 </div>
                 <div style={{ gridColumn: 'span 3', display: 'flex', justifyContent: 'flex-end' }}>
-                  <button type="submit" className="wai-button" disabled={isPending || customers.length === 0 || services.length === 0 || professionals.length === 0}>
+                  <button type="submit" className="wai-button" disabled={isPending || customers.length === 0 || activeServices.length === 0 || activeProfessionals.length === 0}>
                     {isPending ? 'Verifica Conflitti e Salvataggio...' : 'Conferma Prenotazione (Genera Audit Log)'}
                   </button>
                 </div>
@@ -275,6 +347,15 @@ export function CalendarView({
               </table>
             </div>
           )}
+
+          <AppointmentDetailsDialog
+            appointment={selectedAppointment}
+            organizationSlug={organizationSlug}
+            timezone={timezone}
+            readOnly={readOnly}
+            onClose={() => setSelectedAppointment(null)}
+            onResult={(result) => result.error ? setStatus({ error: result.error }) : setStatus({ success: result.message })}
+          />
 
           {/* Cancellation Reason Dialog */}
           {cancelModalAppointmentId && (
@@ -353,7 +434,7 @@ export function CalendarView({
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                     <h4 style={{ margin: 0, fontSize: '1.1rem', color: '#fff' }}>{s.name}</h4>
                     <span style={{ fontWeight: 'bold', color: '#10B981', fontSize: '1.1rem' }}>
-                      {s.price !== null ? `€${s.price.toFixed(2)}` : 'Su preventivo'}
+                      {s.price !== null ? `€${(s.price / 100).toFixed(2)}` : 'Su preventivo'}
                     </span>
                   </div>
                   <span style={{ fontSize: '0.85rem', color: '#60A5FA', display: 'inline-block', marginBottom: '0.5rem' }}>
@@ -364,9 +445,24 @@ export function CalendarView({
                   </p>
                 </div>
                 <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.8rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: '#64748B' }}>
-                  <span>Stato: 🟢 Attivo</span>
+                  <span>Stato: {s.status === 'active' ? '🟢 Attivo' : '⚪ Inattivo'}</span>
                   <span>ID: {s.id.slice(0, 8)}...</span>
                 </div>
+                {!readOnly && (
+                  <button type="button" className="wai-button wai-button-secondary" style={{ marginTop: '0.8rem' }} onClick={() => setEditingServiceId(editingServiceId === s.id ? null : s.id)}>
+                    {editingServiceId === s.id ? 'Chiudi modifica' : 'Modifica'}
+                  </button>
+                )}
+                {editingServiceId === s.id && (
+                  <form onSubmit={(event) => { event.preventDefault(); handleUpdateService(s.id, new FormData(event.currentTarget)); }} style={{ marginTop: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                    <div className="wai-form-group"><label className="wai-label">Nome</label><input className="wai-input" name="name" defaultValue={s.name} required disabled={isPending} /></div>
+                    <div className="wai-form-group"><label className="wai-label">Descrizione</label><input className="wai-input" name="description" defaultValue={s.description || ''} disabled={isPending} /></div>
+                    <div className="wai-form-group"><label className="wai-label">Durata (minuti)</label><input className="wai-input" name="durationMinutes" type="number" min="1" defaultValue={s.durationMinutes} required disabled={isPending} /></div>
+                    <div className="wai-form-group"><label className="wai-label">Prezzo (€)</label><input className="wai-input" name="price" type="number" step="0.01" min="0" defaultValue={s.price !== null ? (s.price / 100).toFixed(2) : '0'} disabled={isPending} /></div>
+                    <div className="wai-form-group"><label className="wai-label">Stato</label><select className="wai-select" name="status" defaultValue={s.status} disabled={isPending}><option value="active">Attivo</option><option value="inactive">Inattivo</option></select></div>
+                    <button type="submit" className="wai-button" disabled={isPending}>Salva modifiche</button>
+                  </form>
+                )}
               </div>
             ))}
           </div>
@@ -396,6 +492,10 @@ export function CalendarView({
                 <div className="wai-form-group">
                   <label className="wai-label">Nome Completo *</label>
                   <input name="name" type="text" className="wai-input" required placeholder="es. Dott.ssa Francesca" disabled={isPending} />
+                </div>
+                <div className="wai-form-group">
+                  <label className="wai-label">Ruolo / qualifica</label>
+                  <input name="title" type="text" className="wai-input" placeholder="es. Consulente" disabled={isPending} />
                 </div>
                 <div className="wai-form-group">
                   <label className="wai-label">Email Operativa</label>
@@ -465,8 +565,20 @@ export function CalendarView({
                     <li key={p.id} style={{ padding: '0.8rem', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.05)' }}>
                       <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '1.05rem' }}>{p.name}</div>
                       <div style={{ fontSize: '0.85rem', color: '#94A3B8', marginTop: '0.3rem' }}>
-                        Email: {p.email || '—'} | Telefono: {p.phoneNormalized || '—'}
+                        {p.title && <span>{p.title} · </span>} Email: {p.email || '—'} | Telefono: {p.phoneNormalized || '—'}
                       </div>
+                      <div style={{ fontSize: '0.8rem', color: '#94A3B8', marginTop: '0.35rem' }}>Stato: {p.status === 'active' ? '🟢 Attivo' : '⚪ Inattivo'}</div>
+                      {!readOnly && <button type="button" className="wai-button wai-button-secondary" style={{ marginTop: '0.65rem', padding: '0.35rem 0.55rem' }} onClick={() => setEditingProfessionalId(editingProfessionalId === p.id ? null : p.id)}>{editingProfessionalId === p.id ? 'Chiudi modifica' : 'Modifica'}</button>}
+                      {editingProfessionalId === p.id && (
+                        <form onSubmit={(event) => { event.preventDefault(); handleUpdateProfessional(p.id, new FormData(event.currentTarget)); }} style={{ marginTop: '0.8rem', borderTop: '1px solid var(--border-color)', paddingTop: '0.8rem' }}>
+                          <div className="wai-form-group"><label className="wai-label">Nome</label><input className="wai-input" name="name" defaultValue={p.name} required disabled={isPending} /></div>
+                          <div className="wai-form-group"><label className="wai-label">Qualifica</label><input className="wai-input" name="title" defaultValue={p.title || ''} disabled={isPending} /></div>
+                          <div className="wai-form-group"><label className="wai-label">Email</label><input className="wai-input" name="email" type="email" defaultValue={p.email || ''} disabled={isPending} /></div>
+                          <div className="wai-form-group"><label className="wai-label">Telefono</label><input className="wai-input" name="phone" defaultValue={p.phoneNormalized || ''} disabled={isPending} /></div>
+                          <div className="wai-form-group"><label className="wai-label">Stato</label><select className="wai-select" name="status" defaultValue={p.status} disabled={isPending}><option value="active">Attivo</option><option value="inactive">Inattivo</option></select></div>
+                          <button type="submit" className="wai-button" disabled={isPending}>Salva modifiche</button>
+                        </form>
+                      )}
                     </li>
                   ))}
                 </ul>

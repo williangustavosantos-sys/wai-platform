@@ -15,6 +15,8 @@ import {
   normalizePhoneNumber
 } from '@/modules/crm/crm.service';
 import { getBusinessRulesConfig, listBusinessExceptions, createBusinessException } from '@/modules/rules/rules.service';
+import { getOrganizationDateKey, getOrganizationDayRange, organizationLocalDateTimeToUtc } from '@/modules/shared/organization-timezone';
+import { verifyOrganizationAccess } from '@/security/auth';
 import {
   CheckAvailabilityInput,
   FindCustomerInput,
@@ -152,7 +154,8 @@ export async function executeCheckAvailability(
   client: SupabaseClient,
   userId: string,
   organizationSlug: string,
-  input: CheckAvailabilityInput
+  input: CheckAvailabilityInput,
+  correlationId?: string,
 ): Promise<ToolExecutionResponse> {
   try {
     // 1. Fetch organization timezone
@@ -270,15 +273,14 @@ export async function executeCheckAvailability(
     }
 
     const now = new Date();
-    const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
-    const todayStr = formatter.format(now);
+    const todayStr = getOrganizationDateKey(now, timezone);
 
-    const rules = await getBusinessRulesConfig(client, client, userId, organizationSlug, 'check-avail-rules');
+    const rules = await getBusinessRulesConfig(client, client, userId, organizationSlug, correlationId || 'check-avail-rules');
     const minAdvanceHours = rules?.minAdvanceBookingHours ?? 0;
     const minAdvanceTimeMs = now.getTime() + minAdvanceHours * 60 * 60 * 1000;
 
-    const searchStart = new Date(reqStartDate.getTime() - 24 * 60 * 60 * 1000).toISOString();
-    const searchEnd = new Date(reqEndDate.getTime() + 48 * 60 * 60 * 1000).toISOString();
+    const searchStart = getOrganizationDayRange(startD, timezone).startAt;
+    const searchEnd = getOrganizationDayRange(endD, timezone).endAt;
 
     const profIds = targetProfs.map(p => p.id);
 
@@ -294,27 +296,10 @@ export async function executeCheckAvailability(
     const bookedAppointments = rawAppointments || [];
     const exceptions = await listBusinessExceptions(client, userId, organizationSlug);
 
-    const getUtcForLocal = (dateStr: string, h: number, m: number): number => {
-      const tempDate = new Date(Date.UTC(
-        parseInt(dateStr.substring(0,4)),
-        parseInt(dateStr.substring(5,7)) - 1,
-        parseInt(dateStr.substring(8,10)),
-        12, 0 
-      ));
-      const tzString = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'longOffset' }).format(tempDate);
-      const match = tzString.match(/GMT([+-])(\d{2}):(\d{2})/);
-      let offsetMinutes = 0;
-      if (match) {
-        const sign = match[1] === '+' ? 1 : -1;
-        offsetMinutes = sign * (parseInt(match[2], 10) * 60 + parseInt(match[3], 10));
-      }
-      return Date.UTC(
-        parseInt(dateStr.substring(0,4)),
-        parseInt(dateStr.substring(5,7)) - 1,
-        parseInt(dateStr.substring(8,10)),
-        h,
-        m
-      ) - (offsetMinutes * 60 * 1000);
+    const getUtcForLocal = (dateStr: string, h: number, m: number): number | null => {
+      const local = `${dateStr}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+      const instant = organizationLocalDateTimeToUtc(local, timezone);
+      return instant ? new Date(instant).getTime() : null;
     };
 
     const results = [];
@@ -335,10 +320,12 @@ export async function executeCheckAvailability(
       const reqDayOfWeek = new Date(`${dateStr}T00:00:00Z`).getUTCDay();
 
       let motive = undefined;
+      const dayRange = getOrganizationDayRange(dateStr, timezone);
 
       for (const targetProf of targetProfs) {
-        const isDayBlocked = exceptions.some(ex => 
-          ex.startDate <= dateStr && ex.endDate >= dateStr && ex.isFullDay
+        const isDayBlocked = exceptions.some(ex =>
+          new Date(ex.startDate).getTime() < new Date(dayRange.endAt).getTime()
+          && new Date(ex.endDate).getTime() > new Date(dayRange.startAt).getTime()
         );
 
         if (isDayBlocked) continue;
@@ -361,6 +348,7 @@ export async function executeCheckAvailability(
 
           let currentSlotStart = getUtcForLocal(dateStr, startH, startM);
           const ruleEnd = getUtcForLocal(dateStr, endH, endM);
+          if (currentSlotStart === null || ruleEnd === null) continue;
 
           while (currentSlotStart + duration * 60 * 1000 <= ruleEnd) {
             const slotEnd = currentSlotStart + duration * 60 * 1000;
@@ -400,7 +388,8 @@ export async function executeCheckAvailability(
       if (allSlotsForDate.length > 0) {
         daysWithSlots++;
       } else {
-        motive = minAdvanceHours > 0 && now.getTime() < getUtcForLocal(dateStr, 23, 59) ? 'MIN_ADVANCE_TIME' : 'FULLY_BOOKED';
+        const endOfDay = getUtcForLocal(dateStr, 23, 59);
+        motive = minAdvanceHours > 0 && endOfDay !== null && now.getTime() < endOfDay ? 'MIN_ADVANCE_TIME' : 'FULLY_BOOKED';
       }
 
       results.push({
@@ -452,7 +441,7 @@ export async function executeToolByName(
       case 'getBusinessRules':
         return { success: true, result: await getBusinessRulesConfig(client, adminClient, userId, organizationSlug, args.category) };
       case 'checkAvailability':
-        return await executeCheckAvailability(client, userId, organizationSlug, args as CheckAvailabilityInput);
+        return await executeCheckAvailability(client, userId, organizationSlug, args as CheckAvailabilityInput, correlationId);
       case 'findCustomer':
         const customers = await listCustomers(client, userId, organizationSlug);
         const normPhone = normalizePhoneNumber(args.phone).normalized;
@@ -530,6 +519,11 @@ async function executeGetCompanyInformation(client: any, userId: string, organiz
   }
   const org = orgResult.data;
   const settings = org.settings_json || {};
+  const organizationName = typeof org.name === 'string' && org.name.trim()
+    ? org.name.trim()
+    : typeof settings.displayName === 'string' && settings.displayName.trim()
+      ? settings.displayName.trim()
+      : 'WAI';
   const services = await listServices(client, userId, organizationSlug);
   const professionals = await listProfessionals(client, userId, organizationSlug);
   const rulesResult = await client.from('business_rules').select('*').eq('organization_id', org.id).maybeSingle();
@@ -537,7 +531,7 @@ async function executeGetCompanyInformation(client: any, userId: string, organiz
   return {
     success: true,
     result: {
-      name: org.name,
+      name: organizationName,
       address: settings.address || 'Non specificato',
       phone: settings.phone || 'Non specificato',
       whatsapp: settings.whatsapp || 'Non specificato',
@@ -551,9 +545,13 @@ async function executeGetCompanyInformation(client: any, userId: string, organiz
 }
 
 async function executeOwnerListAgenda(client: any, userId: string, organizationSlug: string, date: string): Promise<ToolExecutionResponse> {
-  const allAppts = await listAppointments(client, userId, organizationSlug);
-  const filtered = allAppts.filter(a => a.startAt.startsWith(date));
-  return { success: true, result: { appointments: filtered } };
+  const access = await verifyOrganizationAccess(client, userId, organizationSlug);
+  if (!access || !['organization_owner', 'organization_operator'].includes(access.role)) {
+    return { success: false, code: 'PERMISSION_DENIED', error: 'Permessi insufficienti per consultare l’agenda.' };
+  }
+  const range = getOrganizationDayRange(date, access.timezone);
+  const appointments = await listAppointments(client, userId, organizationSlug, range);
+  return { success: true, result: { appointments } };
 }
 
 async function executeOwnerBlockCalendar(client: any, adminClient: any, userId: string, organizationSlug: string, date: string, reason?: string): Promise<ToolExecutionResponse> {
@@ -590,8 +588,11 @@ async function executeOwnerMoveAppointment(client: any, adminClient: any, userId
 }
 
 async function executeOwnerGetStats(client: any, userId: string, organizationSlug: string, date: string): Promise<ToolExecutionResponse> {
-  const allAppts = await listAppointments(client, userId, organizationSlug);
-  const filtered = allAppts.filter(a => a.startAt.startsWith(date));
+  const access = await verifyOrganizationAccess(client, userId, organizationSlug);
+  if (!access || !['organization_owner', 'organization_operator'].includes(access.role)) {
+    return { success: false, code: 'PERMISSION_DENIED', error: 'Permessi insufficienti per consultare le statistiche.' };
+  }
+  const filtered = await listAppointments(client, userId, organizationSlug, getOrganizationDayRange(date, access.timezone));
   return {
     success: true,
     result: {

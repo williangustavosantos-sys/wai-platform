@@ -3,16 +3,21 @@ import { createServerClient } from '@/db/server';
 import { getCurrentSession, verifyOrganizationAccess } from '@/security/auth';
 import { listServices, listProfessionals, listTimeSlots, listAppointments } from '@/modules/calendar/calendar.service';
 import { listCustomers } from '@/modules/crm/crm.service';
+import { listBusinessExceptions } from '@/modules/rules/rules.service';
+import { formatOrganizationMonth, getOrganizationMonth, getOrganizationMonthRange, isOrganizationMonth } from '@/modules/shared/organization-timezone';
+import { getAdjacentMonths } from './calendar-view-model';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { CalendarView } from './CalendarView';
 
 interface Props {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ month?: string }>;
 }
 
-export default async function CalendarPage({ params }: Props) {
+export default async function CalendarPage({ params, searchParams }: Props) {
   const { slug } = await params;
+  const requestedMonth = (await searchParams).month;
   const supabase = await createServerClient();
   const session = await getCurrentSession(supabase);
 
@@ -33,28 +38,36 @@ export default async function CalendarPage({ params }: Props) {
     );
   }
 
-  const [services, professionals, timeSlots, appointments, customers] = await Promise.all([
-    listServices(supabase, session.userId, slug),
-    listProfessionals(supabase, session.userId, slug),
+  const month = isOrganizationMonth(requestedMonth) ? requestedMonth : getOrganizationMonth(new Date(), access.timezone);
+  const monthRange = getOrganizationMonthRange(month, access.timezone);
+  const readOnly = access.role === 'organization_viewer';
+  const [services, professionals, timeSlots, appointments, exceptions, customers] = await Promise.all([
+    listServices(supabase, session.userId, slug, { includeInactive: !readOnly }),
+    listProfessionals(supabase, session.userId, slug, { includeInactive: !readOnly }),
     listTimeSlots(supabase, session.userId, slug),
-    listAppointments(supabase, session.userId, slug),
+    listAppointments(supabase, session.userId, slug, monthRange),
+    listBusinessExceptions(supabase, session.userId, slug, monthRange),
     listCustomers(supabase, session.userId, slug),
   ]);
-
-  const readOnly = access.role === 'organization_viewer';
+  const adjacentMonths = getAdjacentMonths(month);
 
   return (
     <div>
       <div style={{ marginBottom: '2rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
-            <h1 className="wai-title">Motore di Agenda WAI</h1>
+            <h1 className="wai-title">Calendario</h1>
             <p className="wai-subtitle">
-              Gestione appuntamenti, servizi e turni di disponibilità. Dotato di vincolo GIST a livello di database contro sovrapposizioni d&apos;orario (zero double-booking).
+              {formatOrganizationMonth(month, access.timezone, access.locale)} · orari e intervalli in {access.timezone}.
             </p>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <Link className="wai-button wai-button-secondary" href={`/app/${slug}/calendar?month=${adjacentMonths.previous}`}>← Mese precedente</Link>
+              <Link className="wai-button wai-button-secondary" href={`/app/${slug}/calendar?month=${getOrganizationMonth(new Date(), access.timezone)}`}>Mese corrente</Link>
+              <Link className="wai-button wai-button-secondary" href={`/app/${slug}/calendar?month=${adjacentMonths.next}`}>Mese successivo →</Link>
+            </div>
           </div>
           <span className="wai-badge" style={{ background: 'rgba(139, 92, 246, 0.2)', color: '#C4B5FD', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
-            Módulo 3 (Fase 1)
+            Agenda operativa
           </span>
         </div>
       </div>
@@ -65,7 +78,10 @@ export default async function CalendarPage({ params }: Props) {
         professionals={professionals}
         timeSlots={timeSlots}
         appointments={appointments}
+        exceptions={exceptions}
         customers={customers}
+        month={month}
+        timezone={access.timezone}
         readOnly={readOnly}
       />
     </div>

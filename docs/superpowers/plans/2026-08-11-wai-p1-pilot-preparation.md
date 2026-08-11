@@ -1,8 +1,8 @@
 # WAI P1 — Plano de implementação da preparação do piloto
 
-Data: 11 de agosto de 2026  
-Branch: `codex-p1-pilot-preparation`  
-Especificação: `docs/superpowers/specs/2026-08-11-wai-p1-pilot-preparation-design.md`  
+Data: 11 de agosto de 2026
+Branch: `codex-p1-pilot-preparation`
+Especificação: `docs/superpowers/specs/2026-08-11-wai-p1-pilot-preparation-design.md`
 Base P0: 30/30 local e 11/11 Supabase QA real
 
 ## 1. Estratégia
@@ -122,7 +122,7 @@ Objetivo: impedir implementação baseada em APIs desatualizadas.
 2. Consultar changelog e documentação oficial atual do Supabase para SSR/Auth/RLS usados pelo projeto.
 3. Confirmar novamente que `.env.test` está ignorado e que não há segredo staged.
 
-Dependência: nenhuma.  
+Dependência: nenhuma.
 Checkpoint: `git status -sb` sem alterações inesperadas.
 
 ### Etapa 1 — Timezone organizacional compartilhado
@@ -139,7 +139,7 @@ Objetivo: estabelecer a referência temporal única antes de alterar agenda ou c
 2. Cobrir mudança de horário legal e limites de mês em testes unitários.
 3. Não usar timezone do navegador para regras de negócio.
 
-Dependência: Etapa 0.  
+Dependência: Etapa 0.
 Checkpoint: `npx vitest run tests/unit/organization_timezone.test.ts` e `npx tsc --noEmit`.
 
 ### Etapa 2 — Identidade empresarial canônica
@@ -154,7 +154,7 @@ Objetivo: tornar `organizations.name` a única fonte ativa de escrita.
 6. Atualizar `SettingsForm`, ação e página para usar o nome canônico.
 7. Usar `displayName` somente como fallback legado de leitura.
 
-Dependência: Etapa 0.  
+Dependência: Etapa 0.
 Checkpoint: testes de isolamento organizacional existentes, TypeScript e `git diff --check`.
 
 ### Etapa 3 — Contexto administrativo real na conversa
@@ -171,7 +171,7 @@ Objetivo: remover integralmente reconhecimento produtivo por IDs, telefones e fi
 8. Ajustar consultas de agenda, estatísticas e datas relativas para intervalos organizacionais.
 9. Preservar a assinatura existente com opção adicional retrocompatível, evitando quebrar adaptadores externos.
 
-Dependências: Etapa 1.  
+Dependências: Etapa 1.
 Checkpoint: P0 local 30/30, testes unitários de autorização e teste específico da pergunta do proprietário.
 
 ### Etapa 4 — Identidade dinâmica do Digital Employee
@@ -186,7 +186,7 @@ Objetivo: separar empresa e Digital Employee em toda a experiência do piloto.
 6. Remover copy de simulador/QA da experiência principal e manter detalhes técnicos recolhidos, se ainda úteis.
 7. Manter `/assistant` como configuração secundária, sem confundir os dois nomes.
 
-Dependências: Etapas 2 e 3.  
+Dependências: Etapas 2 e 3.
 Checkpoint: teste de separação de identidades, fluxo conversacional direcionado, TypeScript.
 
 ### Etapa 5 — Serviços e profissionais editáveis
@@ -202,7 +202,7 @@ Objetivo: completar a configuração operacional mínima sem mudar schema.
 7. Adicionar Server Actions finas e formulários de edição ao container existente.
 8. Manter seletores de booking somente com registros ativos.
 
-Dependências: Etapa 2 para padrões de formulário/auditoria.  
+Dependências: Etapa 2 para padrões de formulário/auditoria.
 Checkpoint: testes unitários de serviço, persistência QA de desativação/reativação e P0 local 30/30.
 
 ### Etapa 6 — Backend mensal e ações da agenda
@@ -218,7 +218,7 @@ Objetivo: preparar dados reais para a UI mensal e todas as mutations aprovadas.
 7. Propagar códigos estruturados como `SLOT_OCCUPIED` para a apresentação.
 8. Garantir que queries e mutations continuam sob RLS/autorização dos serviços.
 
-Dependências: Etapas 1 e 5.  
+Dependências: Etapas 1 e 5.
 Checkpoint: testes unitários de agenda/regras, P0 local 30/30 e casos QA reais de booking, cancelamento, reagendamento e bloqueio.
 
 ### Etapa 7 — Shell operacional e estados comuns
@@ -233,7 +233,7 @@ Objetivo: centrar o produto nas duas áreas aprovadas.
 6. Adicionar loading e error boundaries do workspace.
 7. Diferenciar acesso negado, falha de dados e estado vazio.
 
-Dependências: Etapas 2 e 4.  
+Dependências: Etapas 2 e 4.
 Checkpoint: renderização dirigida, TypeScript e build parcial/completo conforme custo.
 
 ### Etapa 8 — Calendário mensal e detalhes
@@ -252,7 +252,7 @@ Objetivo: entregar leitura imediata da agenda e ações persistentes.
 10. Manter gestão de serviços/profissionais como abas secundárias existentes.
 11. Adaptar grade, formulários e diálogo para mobile.
 
-Dependências: Etapas 5, 6 e 7.  
+Dependências: Etapas 5, 6 e 7.
 Checkpoint: testes de estado visível, TypeScript, build e `git diff --check`.
 
 ### Etapa 9 — Aceitação P1 real no Supabase QA
@@ -275,7 +275,7 @@ Objetivo: provar comportamento e persistência sem mocks.
 4. Limpar somente registros identificados pelo run.
 5. Nunca truncar tabelas nem usar produção.
 
-Dependências: Etapas 2–8.  
+Dependências: Etapas 2–8.
 Checkpoint: teste P1 real isolado integralmente verde e P0 Supabase ainda 11/11.
 
 ### Etapa 10 — Relatório e regressão final
@@ -297,7 +297,7 @@ Objetivo: consolidar evidências e salvar apenas trabalho seguro.
 6. Commitar o produto/testes/relatório com `feat: prepare WAI for controlled pilot`.
 7. Fazer push para `origin/codex-p1-pilot-preparation` sem merge em `main`.
 
-Dependências: todas as etapas anteriores.  
+Dependências: todas as etapas anteriores.
 Checkpoint final: somente `READY FOR HUMAN ACCEPTANCE TEST`; o piloto controlado permanece dependente da execução humana A–J.
 
 ## 6. Matriz de dependências

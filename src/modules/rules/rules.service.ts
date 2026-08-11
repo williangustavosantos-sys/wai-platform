@@ -3,6 +3,7 @@ import { recordAuditLog } from '@/modules/audit/audit.service';
 import { Logger } from '@/logging/logger';
 import { verifyOrganizationAccess } from '@/security/auth';
 import { BusinessRulesConfig, BusinessException, UpdateBusinessRulesInput, CreateBusinessExceptionInput } from './rules.types';
+import { getOrganizationDayRange, organizationLocalDateTimeToUtc } from '@/modules/shared/organization-timezone';
 
 const DEFAULT_BUSINESS_RULES = {
   cancellationWindowHours: 24,
@@ -16,10 +17,20 @@ const DEFAULT_BUSINESS_RULES = {
 };
 
 function deriveIsFullDay(startAt: string, endAt: string): boolean {
-  // Nota de compatibilidade: O schema 'closures' não possui coluna booleana 'is_full_day'.
-  // Verificamos se o intervalo começa em 00:00:00 e termina em 23:59:59 para inferir que cobre o dia completo.
   if (!startAt || !endAt) return false;
-  return startAt.includes('T00:00:00') && endAt.includes('T23:59:59');
+  const duration = new Date(endAt).getTime() - new Date(startAt).getTime();
+  // Full-day closures are stored as [start of local day, start of next local
+  // day). DST makes them 23 or 25 hours, so accept that exact family only.
+  return duration >= 23 * 60 * 60 * 1000 && duration <= 25 * 60 * 60 * 1000;
+}
+
+function normalizeExceptionInstant(value: string, timezone: string): string | null {
+  if (!value) return null;
+  if (/[zZ]$|[+-]\d\d:\d\d$/.test(value)) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  return organizationLocalDateTimeToUtc(value, timezone);
 }
 
 function mapDbToConfig(row: Record<string, unknown>): BusinessRulesConfig {
@@ -179,15 +190,19 @@ export async function updateBusinessRulesConfig(
 /**
  * Lists holiday periods / closures under RLS.
  */
-export async function listBusinessExceptions(client: SupabaseClient, userId: string, organizationSlug: string): Promise<BusinessException[]> {
+export async function listBusinessExceptions(
+  client: SupabaseClient, userId: string, organizationSlug: string, options?: { startAt?: string; endAt?: string },
+): Promise<BusinessException[]> {
   const access = await verifyOrganizationAccess(client, userId, organizationSlug);
   if (!access) return [];
 
-  const { data, error } = await client
+  let query = client
     .from('closures')
     .select('*')
-    .eq('organization_id', access.organizationId)
-    .order('start_at', { ascending: true });
+    .eq('organization_id', access.organizationId);
+  if (options?.startAt) query = query.gte('end_at', options.startAt);
+  if (options?.endAt) query = query.lt('start_at', options.endAt);
+  const { data, error } = await query.order('start_at', { ascending: true });
 
   if (error) throw new Error(`Errore durante il recupero dei periodi di chiusura: ${error.message}`);
   return (data || []).map(row => ({
@@ -214,19 +229,33 @@ export async function createBusinessException(
   }
 
   const isFullDay = input.isFullDay !== undefined ? input.isFullDay : true;
-  const startAt = (isFullDay || !input.startDate.includes('T'))
-    ? (input.startDate.includes('T') ? input.startDate.split('T')[0] + 'T00:00:00.000Z' : `${input.startDate}T00:00:00.000Z`)
-    : input.startDate;
-  const endAt = (isFullDay || !input.endDate.includes('T'))
-    ? (input.endDate.includes('T') ? input.endDate.split('T')[0] + 'T23:59:59.999Z' : `${input.endDate}T23:59:59.999Z`)
-    : input.endDate;
+  const startDay = input.startDate.split('T')[0];
+  const endDay = input.endDate.split('T')[0];
+  let startAt: string | null;
+  let endAt: string | null;
+  if (isFullDay) {
+    try {
+      startAt = getOrganizationDayRange(startDay, access.timezone).startAt;
+      endAt = getOrganizationDayRange(endDay, access.timezone).endAt;
+    } catch {
+      return { success: false, error: 'La data del blocco non è valida nel fuso orario dell’azienda.' };
+    }
+  } else {
+    startAt = normalizeExceptionInstant(input.startDate, access.timezone);
+    endAt = normalizeExceptionInstant(input.endDate, access.timezone);
+  }
+  if (!startAt || !endAt || new Date(endAt).getTime() <= new Date(startAt).getTime()) {
+    return { success: false, error: 'L’intervallo del blocco non è valido.' };
+  }
+  const reason = input.reason.trim();
+  if (!reason) return { success: false, error: 'Indica un motivo per il blocco.' };
 
   const insertPayload = {
     organization_id: access.organizationId,
     start_at: startAt,
     end_at: endAt,
-    reason: input.reason.trim(),
-    closure_type: 'holiday',
+    reason,
+    closure_type: isFullDay ? 'holiday' : 'blocked_slot',
   };
 
   const { data: created, error } = await client.from('closures').insert([insertPayload]).select('*').single();

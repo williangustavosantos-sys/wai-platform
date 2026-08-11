@@ -4,10 +4,26 @@ import { Logger } from '@/logging/logger';
 import { verifyOrganizationAccess } from '@/security/auth';
 
 export interface OrganizationSettingsUpdate {
+  /** Canonical organization name. New writes must use this field. */
+  businessName?: string;
+  /** Legacy input only. It is never persisted back to settings_json.displayName. */
   displayName?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  workingHours?: string;
   themePreference?: 'institutional' | 'balanced' | 'cool';
   locale?: string;
-  [key: string]: unknown;
+}
+
+function cleanOptionalText(value: string | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function isValidOptionalEmail(value: string | null): boolean {
+  return !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 /**
@@ -34,7 +50,7 @@ export async function updateOrganizationSettings(
   newSettings: OrganizationSettingsUpdate,
   correlationId: string,
   logger?: Logger
-): Promise<{ success: boolean; updatedSettings?: Record<string, unknown>; error?: string }> {
+): Promise<{ success: boolean; organizationName?: string; updatedSettings?: Record<string, unknown>; error?: string }> {
   const log = logger || new Logger({ correlationId, userId, organizationSlug });
 
   // 1. Verify access and ensure actor is organization_owner or wai_admin
@@ -48,12 +64,55 @@ export async function updateOrganizationSettings(
     return { success: false, error: 'Operação permitida exclusivamente ao proprietário (owner) da organização.' };
   }
 
-  const beforeData = { ...access.settingsJson, locale: access.locale };
-  const { locale, ...settingsJsonUpdates } = newSettings;
-  const afterSettingsJson = { ...access.settingsJson, ...settingsJsonUpdates };
-  const afterData = { ...afterSettingsJson, locale: locale || access.locale };
+  const beforeData = {
+    name: access.organizationName,
+    settings: { ...access.settingsJson },
+    locale: access.locale,
+  };
+  const {
+    businessName,
+    displayName: legacyDisplayName,
+    locale,
+    address,
+    phone,
+    email,
+    workingHours,
+    themePreference,
+  } = newSettings;
+  const requestedName = typeof businessName === 'string' ? businessName : legacyDisplayName;
+  const organizationName = typeof requestedName === 'string' ? requestedName.trim() : access.organizationName;
+  if (!organizationName) {
+    return { success: false, error: 'Il nome dell’azienda è obbligatorio.' };
+  }
 
-  const updatePayload: Record<string, unknown> = { settings_json: afterSettingsJson };
+  const normalizedEmail = cleanOptionalText(email);
+  if (!isValidOptionalEmail(normalizedEmail)) {
+    return { success: false, error: 'Inserisci un indirizzo email valido.' };
+  }
+
+  // displayName is intentionally excluded: it remains read-only legacy compatibility.
+  // Only the fields still owned by settings_json are merged here.
+  const settingsJsonUpdates: Record<string, unknown> = {};
+  const normalizedAddress = cleanOptionalText(address);
+  const normalizedPhone = cleanOptionalText(phone);
+  const normalizedWorkingHours = cleanOptionalText(workingHours);
+  if (address !== undefined) settingsJsonUpdates.address = normalizedAddress;
+  if (phone !== undefined) settingsJsonUpdates.phone = normalizedPhone;
+  if (email !== undefined) settingsJsonUpdates.email = normalizedEmail;
+  if (workingHours !== undefined) settingsJsonUpdates.working_hours = normalizedWorkingHours;
+  if (themePreference !== undefined) settingsJsonUpdates.themePreference = themePreference;
+
+  const afterSettingsJson = { ...access.settingsJson, ...settingsJsonUpdates };
+  const afterData = {
+    name: organizationName,
+    settings: afterSettingsJson,
+    locale: locale || access.locale,
+  };
+
+  const updatePayload: Record<string, unknown> = {
+    name: organizationName,
+    settings_json: afterSettingsJson,
+  };
   if (locale) {
     updatePayload.locale = locale;
   }
@@ -88,7 +147,7 @@ export async function updateOrganizationSettings(
   );
 
   log.info('Organization settings updated and audited successfully', { organizationId: access.organizationId });
-  return { success: true, updatedSettings: afterData };
+  return { success: true, organizationName, updatedSettings: afterSettingsJson };
 }
 
 /**

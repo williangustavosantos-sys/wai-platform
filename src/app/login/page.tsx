@@ -71,11 +71,9 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)', fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-          <p>Ambiente Sicuro e Isolato Multi-Tenant (Fase 0)</p>
-          <p style={{ marginTop: '0.5rem' }}>Credenziali locali di test:</p>
-          <p><code>admin@wai.ai</code> | <code>aurora@studio.it</code> | <code>brera@studio.it</code></p>
-        </div>
+        <p style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)', fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+          Area operativa sicura e isolata per organizzazione.
+        </p>
       </div>
     </div>
   );

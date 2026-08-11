@@ -9,6 +9,7 @@ export interface AIProviderContext {
 }
 
 import { Intent } from '../conversation/conversation.types';
+import { getOrganizationDateKey, organizationLocalDateTimeToUtc } from '@/modules/shared/organization-timezone';
 
 export type StructuredIntent = Intent;
 
@@ -407,9 +408,9 @@ export class LocalIntentRouter {
           const newDate = dateEntity.date;
           const newTime = timeEntity.time;
           if (newDate && newTime) {
-            ownerCommandNewDateTime = `${newDate}T${newTime}:00Z`;
+            ownerCommandNewDateTime = `${newDate}T${newTime}:00`;
           } else if (newDate) {
-            ownerCommandNewDateTime = `${newDate}T09:00:00Z`;
+            ownerCommandNewDateTime = `${newDate}T09:00:00`;
           }
         } else if (isStats) {
           ownerCommandType = 'get_stats';
@@ -535,7 +536,7 @@ export class LocalIntentRouter {
     };
   }
 
-  convertToToolCalls(route: StructuredIntentRoute): Array<{ name: string; args: Record<string, unknown> }> {
+  convertToToolCalls(route: StructuredIntentRoute, organizationTimezone = 'Europe/Rome'): Array<{ name: string; args: Record<string, unknown> }> {
     const args: Record<string, unknown> = {};
     const e = route.entities;
 
@@ -560,21 +561,25 @@ export class LocalIntentRouter {
     }
     const hasDateTime = e.date && e.time;
     if (hasDateTime) {
-      args.dateTime = `${e.date}T${e.time}:00+02:00`;
+      args.dateTime = organizationLocalDateTimeToUtc(`${e.date}T${e.time}:00`, organizationTimezone) || '';
     }
 
     if (route.intent === 'OWNER_COMMAND') {
       if (e.ownerCommandType === 'list_agenda') {
-        return [{ name: 'ownerListAgenda', args: { date: e.date || new Date().toISOString().slice(0, 10) } }];
+        return [{ name: 'ownerListAgenda', args: { date: e.date || getOrganizationDateKey(new Date(), organizationTimezone) } }];
       }
       if (e.ownerCommandType === 'block_calendar') {
-        return [{ name: 'ownerBlockCalendar', args: { date: e.date || new Date().toISOString().slice(0, 10), reason: e.ownerCommandReason || 'Blocco da titolare' } }];
+        return [{ name: 'ownerBlockCalendar', args: { date: e.date || getOrganizationDateKey(new Date(), organizationTimezone), reason: e.ownerCommandReason || 'Blocco da titolare' } }];
       }
       if (e.ownerCommandType === 'move_appointment') {
-        return [{ name: 'ownerMoveAppointment', args: { customerName: e.ownerCommandCustomerName || '', newDateTime: e.ownerCommandNewDateTime || '' } }];
+        const localDateTime = e.ownerCommandNewDateTime || '';
+        return [{ name: 'ownerMoveAppointment', args: {
+          customerName: e.ownerCommandCustomerName || '',
+          newDateTime: organizationLocalDateTimeToUtc(localDateTime, organizationTimezone) || '',
+        } }];
       }
       if (e.ownerCommandType === 'get_stats') {
-        return [{ name: 'ownerGetStats', args: { date: e.date || new Date().toISOString().slice(0, 10) } }];
+        return [{ name: 'ownerGetStats', args: { date: e.date || getOrganizationDateKey(new Date(), organizationTimezone) } }];
       }
     }
 
@@ -586,7 +591,7 @@ export class LocalIntentRouter {
       if (e.customer?.name) args.customerName = e.customer.name;
       else args.customerName = "Ospite";
       if (hasDateTime) {
-        args.startAt = `${e.date}T${e.time}:00+02:00`;
+        args.startAt = organizationLocalDateTimeToUtc(`${e.date}T${e.time}:00`, organizationTimezone) || '';
       }
       return [{ name: 'createAppointment', args }];
     }
@@ -600,7 +605,7 @@ export class LocalIntentRouter {
     if (route.intent === 'RESCHEDULE_APPOINTMENT') {
       args.appointmentId = 'AUTO_RESOLVE';
       if (hasDateTime) {
-        args.newStartAt = `${e.date}T${e.time}:00+02:00`;
+        args.newStartAt = organizationLocalDateTimeToUtc(`${e.date}T${e.time}:00`, organizationTimezone) || '';
       }
       return [{ name: 'rescheduleAppointment', args }];
     }

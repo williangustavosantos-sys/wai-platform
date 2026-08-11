@@ -1,6 +1,7 @@
 import React from 'react';
-import { createServerClient } from '@/db/server';
+import { createServerClient, createAdminClient } from '@/db/server';
 import { getCurrentSession, verifyOrganizationAccess } from '@/security/auth';
+import { getAssistantConfig } from '@/modules/assistant/assistant.service';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import ChatSimulatorView from './ChatSimulatorView';
@@ -10,8 +11,8 @@ interface Props {
 }
 
 export const metadata = {
-  title: 'Simulatore WAI & Inspector — Work Artificial Intelligence',
-  description: 'Ambiente di test e dimostrazione commerciale per l assistente digitale WAI interconnesso ad agenda GIST e CRM RLS.',
+  title: 'Digital Employee — WAI',
+  description: 'Area operativa del Digital Employee WAI.',
 };
 
 export default async function ChatSimulatorPage({ params }: Props) {
@@ -47,19 +48,32 @@ export default async function ChatSimulatorPage({ params }: Props) {
     );
   }
 
+  const config = await getAssistantConfig(
+    supabase,
+    createAdminClient(),
+    session.userId,
+    slug,
+    crypto.randomUUID(),
+  );
+
   return (
     <main className="wai-chat-page">
       <div className="wai-chat-breadcrumb">
         <Link href={`/app/${slug}`} className="wai-chat-breadcrumb-link">
           <svg width="16" height="16" style={{ width: '16px', height: '16px', flexShrink: 0 }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-          Torna al Pannello di {slug.toUpperCase()}
+          Torna alle impostazioni di {access.organizationName}
         </Link>
         <span style={{ opacity: 0.4 }}>•</span>
         <Link href={`/app/${slug}/assistant`} className="wai-chat-breadcrumb-link">
-          Configurazione Assistente
+          Configurazione Digital Employee
         </Link>
       </div>
-      <ChatSimulatorView organizationSlug={slug} />
+      <ChatSimulatorView
+        organizationSlug={slug}
+        organizationName={access.organizationName}
+        digitalEmployeeName={config?.name || 'Digital Employee'}
+        avatarPlaceholderUrl={config?.avatarPlaceholderUrl || '/avatars/default.svg'}
+      />
     </main>
   );
 }

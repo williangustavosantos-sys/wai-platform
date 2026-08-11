@@ -4,36 +4,71 @@ import { Logger } from '@/logging/logger';
 import { verifyOrganizationAccess } from '@/security/auth';
 import { 
   Service, Professional, AvailableTimeSlot, Appointment, 
-  CreateServiceInput, CreateProfessionalInput, CreateTimeSlotInput, CreateAppointmentInput, AppointmentStatus 
+  CreateServiceInput, UpdateServiceInput, CreateProfessionalInput, UpdateProfessionalInput,
+  CreateTimeSlotInput, CreateAppointmentInput, AppointmentStatus, AppointmentListOptions
 } from './calendar.types';
 import { normalizePhoneNumber } from '@/modules/crm/crm.service';
+
+function canManage(role: string): boolean {
+  return role === 'organization_owner' || role === 'organization_operator';
+}
+
+function mapService(row: Record<string, unknown>): Service {
+  const rawPrice = row.price_cents ?? row.price;
+  return {
+    id: row.id as string,
+    organizationId: row.organization_id as string,
+    name: row.name as string,
+    description: row.description as string | null || null,
+    durationMinutes: Number(row.duration_minutes),
+    bufferAfterMinutes: Number(row.buffer_after_minutes || 0),
+    price: rawPrice === null || rawPrice === undefined ? null : Number(rawPrice),
+    status: row.status as Service['status'],
+    createdAt: row.created_at as string,
+  };
+}
+
+function mapProfessional(row: Record<string, unknown>): Professional {
+  return {
+    id: row.id as string,
+    organizationId: row.organization_id as string,
+    name: row.name as string,
+    email: row.email as string | null || null,
+    phoneNormalized: (row.phone ?? row.phone_normalized) as string | null || null,
+    status: row.status as Professional['status'],
+    title: row.title as string | null || null,
+    createdAt: row.created_at as string,
+  };
+}
+
+function cleanRequiredName(value: string | undefined, label: string): { value?: string; error?: string } {
+  const cleaned = value?.trim();
+  return cleaned ? { value: cleaned } : { error: `${label} è obbligatorio.` };
+}
+
+function isValidEmail(value: string | null | undefined): boolean {
+  return !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
 
 /**
  * Lists organization services under RLS.
  */
-export async function listServices(client: SupabaseClient, userId: string, organizationSlug: string): Promise<Service[]> {
+export async function listServices(client: SupabaseClient, userId: string, organizationSlug: string, options?: { includeInactive?: boolean }): Promise<Service[]> {
   const access = await verifyOrganizationAccess(client, userId, organizationSlug);
   if (!access) return [];
 
-  const { data, error } = await client
+  let query = client
     .from('services')
     .select('*')
     .eq('organization_id', access.organizationId)
-    .eq('status', 'active')
     .order('name', { ascending: true });
 
+  if (!options?.includeInactive || !canManage(access.role)) query = query.eq('status', 'active');
+
+  const { data, error } = await query;
+
   if (error) throw new Error(`Errore durante il recupero dei servizi: ${error.message}`);
-  return (data || []).map(row => ({
-    id: row.id,
-    organizationId: row.organization_id,
-    name: row.name,
-    description: row.description || null,
-    durationMinutes: row.duration_minutes,
-    bufferAfterMinutes: row.buffer_after_minutes || 0,
-    price: row.price !== null ? Number(row.price) : null,
-    status: row.status,
-    createdAt: row.created_at,
-  }));
+  return (data || []).map(row => mapService(row as Record<string, unknown>));
 }
 
 /**
@@ -44,16 +79,23 @@ export async function createService(
   input: CreateServiceInput, correlationId: string
 ): Promise<{ success: boolean; data?: Service; error?: string }> {
   const access = await verifyOrganizationAccess(client, userId, organizationSlug);
-  if (!access || (access.role !== 'organization_owner' && access.role !== 'organization_operator')) {
+  if (!access || !canManage(access.role)) {
     return { success: false, error: 'Permessi insufficienti per creare un servizio.' };
   }
 
+  const name = cleanRequiredName(input.name, 'Il nome del servizio');
+  if (name.error) return { success: false, error: name.error };
+  const durationMinutes = Number(input.durationMinutes);
+  const priceCents = input.price ?? 0;
+  if (!Number.isInteger(durationMinutes) || durationMinutes <= 0) return { success: false, error: 'La durata deve essere un numero intero positivo.' };
+  if (!Number.isInteger(priceCents) || priceCents < 0) return { success: false, error: 'Il prezzo deve essere un importo non negativo in centesimi.' };
+
   const insertPayload = {
     organization_id: access.organizationId,
-    name: input.name.trim(),
+    name: name.value,
     description: input.description ? input.description.trim() : null,
-    duration_minutes: Number(input.durationMinutes),
-    price: input.price !== undefined ? Number(input.price) : null,
+    duration_minutes: durationMinutes,
+    price_cents: priceCents,
     status: 'active',
   };
 
@@ -68,40 +110,72 @@ export async function createService(
 
   return {
     success: true,
-    data: {
-      id: created.id, organizationId: created.organization_id, name: created.name,
-      description: created.description, durationMinutes: created.duration_minutes,
-      bufferAfterMinutes: created.buffer_after_minutes || 0,
-      price: created.price, status: created.status, createdAt: created.created_at,
-    }
+    data: mapService(created as Record<string, unknown>),
   };
+}
+
+/** Updates the existing service owned by the resolved organization. */
+export async function updateService(
+  client: SupabaseClient, adminClient: SupabaseClient, userId: string, organizationSlug: string,
+  serviceId: string, input: UpdateServiceInput, correlationId: string,
+): Promise<{ success: boolean; data?: Service; error?: string }> {
+  const access = await verifyOrganizationAccess(client, userId, organizationSlug);
+  if (!access || !canManage(access.role)) return { success: false, error: 'Permessi insufficienti per aggiornare il servizio.' };
+
+  const { data: existing, error: fetchError } = await client.from('services').select('*')
+    .eq('id', serviceId).eq('organization_id', access.organizationId).single();
+  if (fetchError || !existing) return { success: false, error: 'Servizio non trovato in questa organizzazione.' };
+
+  const payload: Record<string, unknown> = {};
+  if (input.name !== undefined) {
+    const name = cleanRequiredName(input.name, 'Il nome del servizio');
+    if (name.error) return { success: false, error: name.error };
+    payload.name = name.value;
+  }
+  if (input.description !== undefined) payload.description = input.description?.trim() || null;
+  if (input.durationMinutes !== undefined) {
+    const duration = Number(input.durationMinutes);
+    if (!Number.isInteger(duration) || duration <= 0) return { success: false, error: 'La durata deve essere un numero intero positivo.' };
+    payload.duration_minutes = duration;
+  }
+  if (input.price !== undefined) {
+    const price = Number(input.price);
+    if (!Number.isInteger(price) || price < 0) return { success: false, error: 'Il prezzo deve essere un importo non negativo in centesimi.' };
+    payload.price_cents = price;
+  }
+  if (input.status !== undefined) payload.status = input.status;
+  if (!Object.keys(payload).length) return { success: false, error: 'Nessuna modifica del servizio ricevuta.' };
+
+  const { data: updated, error } = await client.from('services').update(payload)
+    .eq('id', serviceId).eq('organization_id', access.organizationId).select('*').single();
+  if (error || !updated) return { success: false, error: `Impossibile aggiornare il servizio: ${error?.message || 'errore sconosciuto'}` };
+
+  await recordAuditLog({
+    organizationId: access.organizationId, actorUserId: userId, actorType: 'user', action: 'UPDATE_SERVICE',
+    entityType: 'service', entityId: serviceId, beforeData: existing, afterData: payload, correlationId,
+  }, adminClient);
+  return { success: true, data: mapService(updated as Record<string, unknown>) };
 }
 
 /**
  * Lists professionals under RLS.
  */
-export async function listProfessionals(client: SupabaseClient, userId: string, organizationSlug: string): Promise<Professional[]> {
+export async function listProfessionals(client: SupabaseClient, userId: string, organizationSlug: string, options?: { includeInactive?: boolean }): Promise<Professional[]> {
   const access = await verifyOrganizationAccess(client, userId, organizationSlug);
   if (!access) return [];
 
-  const { data, error } = await client
+  let query = client
     .from('professionals')
     .select('*')
     .eq('organization_id', access.organizationId)
-    .eq('status', 'active')
     .order('name', { ascending: true });
 
+  if (!options?.includeInactive || !canManage(access.role)) query = query.eq('status', 'active');
+
+  const { data, error } = await query;
+
   if (error) throw new Error(`Errore durante il recupero dei professionisti: ${error.message}`);
-  return (data || []).map(row => ({
-    id: row.id,
-    organizationId: row.organization_id,
-    name: row.name,
-    email: row.email || null,
-    phoneNormalized: row.phone_normalized || null,
-    status: row.status,
-    title: row.title || null,
-    createdAt: row.created_at,
-  }));
+  return (data || []).map(row => mapProfessional(row as Record<string, unknown>));
 }
 
 /**
@@ -112,7 +186,7 @@ export async function createProfessional(
   input: CreateProfessionalInput, correlationId: string
 ): Promise<{ success: boolean; data?: Professional; error?: string }> {
   const access = await verifyOrganizationAccess(client, userId, organizationSlug);
-  if (!access || (access.role !== 'organization_owner' && access.role !== 'organization_operator')) {
+  if (!access || !canManage(access.role)) {
     return { success: false, error: 'Permessi insufficienti.' };
   }
 
@@ -125,11 +199,16 @@ export async function createProfessional(
     phone = res.normalized;
   }
 
+  const name = cleanRequiredName(input.name, 'Il nome del professionista');
+  if (name.error) return { success: false, error: name.error };
+  const email = input.email?.trim() || null;
+  if (!isValidEmail(email)) return { success: false, error: 'Inserisci un indirizzo email valido.' };
   const insertPayload = {
     organization_id: access.organizationId,
-    name: input.name.trim(),
-    email: input.email ? input.email.trim() : null,
-    phone_normalized: phone,
+    name: name.value,
+    title: input.title?.trim() || '',
+    email,
+    phone,
     status: 'active',
   };
 
@@ -144,12 +223,54 @@ export async function createProfessional(
 
   return {
     success: true,
-    data: {
-      id: created.id, organizationId: created.organization_id, name: created.name,
-      email: created.email, phoneNormalized: created.phone_normalized,
-      status: created.status, createdAt: created.created_at,
-    }
+    data: mapProfessional(created as Record<string, unknown>),
   };
+}
+
+/** Updates an existing professional without crossing the organization boundary. */
+export async function updateProfessional(
+  client: SupabaseClient, adminClient: SupabaseClient, userId: string, organizationSlug: string,
+  professionalId: string, input: UpdateProfessionalInput, correlationId: string,
+): Promise<{ success: boolean; data?: Professional; error?: string }> {
+  const access = await verifyOrganizationAccess(client, userId, organizationSlug);
+  if (!access || !canManage(access.role)) return { success: false, error: 'Permessi insufficienti per aggiornare il professionista.' };
+
+  const { data: existing, error: fetchError } = await client.from('professionals').select('*')
+    .eq('id', professionalId).eq('organization_id', access.organizationId).single();
+  if (fetchError || !existing) return { success: false, error: 'Professionista non trovato in questa organizzazione.' };
+
+  const payload: Record<string, unknown> = {};
+  if (input.name !== undefined) {
+    const name = cleanRequiredName(input.name, 'Il nome del professionista');
+    if (name.error) return { success: false, error: name.error };
+    payload.name = name.value;
+  }
+  if (input.title !== undefined) payload.title = input.title?.trim() || '';
+  if (input.email !== undefined) {
+    const email = input.email?.trim() || null;
+    if (!isValidEmail(email)) return { success: false, error: 'Inserisci un indirizzo email valido.' };
+    payload.email = email;
+  }
+  if (input.phone !== undefined) {
+    if (!input.phone) payload.phone = null;
+    else {
+      const normalized = normalizePhoneNumber(input.phone);
+      if (!normalized.valid || !normalized.normalized) return { success: false, error: normalized.reason || 'Numero di telefono non valido.' };
+      payload.phone = normalized.normalized;
+    }
+  }
+  if (input.status !== undefined) payload.status = input.status;
+  if (!Object.keys(payload).length) return { success: false, error: 'Nessuna modifica del professionista ricevuta.' };
+
+  const { data: updated, error } = await client.from('professionals').update(payload)
+    .eq('id', professionalId).eq('organization_id', access.organizationId).select('*').single();
+  if (error || !updated) return { success: false, error: `Impossibile aggiornare il professionista: ${error?.message || 'errore sconosciuto'}` };
+
+  await recordAuditLog({
+    organizationId: access.organizationId, actorUserId: userId, actorType: 'user', action: 'UPDATE_PROFESSIONAL',
+    entityType: 'professional', entityId: professionalId, beforeData: existing, afterData: payload, correlationId,
+  }, adminClient);
+  return { success: true, data: mapProfessional(updated as Record<string, unknown>) };
 }
 
 /**
@@ -224,11 +345,11 @@ export async function createTimeSlot(
 /**
  * Lists appointments with joined display metadata.
  */
-export async function listAppointments(client: SupabaseClient, userId: string, organizationSlug: string): Promise<Appointment[]> {
+export async function listAppointments(client: SupabaseClient, userId: string, organizationSlug: string, options?: AppointmentListOptions): Promise<Appointment[]> {
   const access = await verifyOrganizationAccess(client, userId, organizationSlug);
   if (!access) return [];
 
-  const { data, error } = await client
+  let query = client
     .from('appointments')
     .select(`
       *,
@@ -236,8 +357,11 @@ export async function listAppointments(client: SupabaseClient, userId: string, o
       services(name),
       professionals(name)
     `)
-    .eq('organization_id', access.organizationId)
-    .order('start_at', { ascending: true });
+    .eq('organization_id', access.organizationId);
+
+  if (options?.startAt) query = query.gte('start_at', options.startAt);
+  if (options?.endAt) query = query.lt('start_at', options.endAt);
+  const { data, error } = await query.order('start_at', { ascending: true });
 
   if (error) throw new Error(`Errore durante il recupero degli appuntamenti: ${error.message}`);
 
@@ -402,6 +526,19 @@ export async function updateAppointmentStatus(
 
   if (fetchErr || !existing) return { success: false, code: 'APPOINTMENT_NOT_FOUND', error: 'Appuntamento non trovato nel tenant.' };
 
+  const allowedTransitions: Record<AppointmentStatus, AppointmentStatus[]> = {
+    held: ['confirmed', 'cancelled', 'expired'],
+    confirmed: ['cancelled', 'completed', 'no_show'],
+    cancelled: [],
+    completed: [],
+    no_show: [],
+    expired: [],
+  };
+  const existingStatus = existing.status as AppointmentStatus;
+  if (!allowedTransitions[existingStatus]?.includes(newStatus)) {
+    return { success: false, code: 'INVALID_APPOINTMENT_STATUS_TRANSITION', error: 'La transizione di stato richiesta non è consentita.' };
+  }
+
   const updatePayload: Record<string, unknown> = { status: newStatus };
   if (newStatus === 'cancelled' && cancellationReason) {
     updatePayload.cancellation_reason = cancellationReason;
@@ -445,6 +582,10 @@ export async function rescheduleAppointment(
 
   if (fetchErr || !existing) {
     return { success: false, code: 'APPOINTMENT_NOT_FOUND', error: 'Appuntamento non trovato.' };
+  }
+
+  if (!['held', 'confirmed'].includes(existing.status)) {
+    return { success: false, code: 'INVALID_APPOINTMENT_STATUS_TRANSITION', error: 'Solo un appuntamento attivo può essere riprogrammato.' };
   }
 
   // 2. Fetch service to get duration_minutes

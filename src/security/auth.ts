@@ -16,6 +16,20 @@ export interface OrganizationAccess {
   settingsJson: Record<string, unknown>;
 }
 
+function resolveOrganizationName(name: unknown, settingsJson: unknown): string {
+  const canonicalName = typeof name === 'string' ? name.trim() : '';
+  if (canonicalName) return canonicalName;
+
+  const settings = settingsJson && typeof settingsJson === 'object'
+    ? settingsJson as Record<string, unknown>
+    : {};
+  const legacyDisplayName = typeof settings.displayName === 'string'
+    ? settings.displayName.trim()
+    : '';
+
+  return legacyDisplayName || 'WAI';
+}
+
 /**
  * Validates active session on the server. Never trusts client-side token representations.
  */
@@ -92,7 +106,7 @@ export async function verifyOrganizationAccess(
     if (admin) {
       return {
         organizationId: org.id,
-        organizationName: org.name,
+        organizationName: resolveOrganizationName(org.name, org.settings_json),
         organizationSlug: org.slug,
         role: 'organization_owner', // Admin assumes operational oversight
         timezone: org.timezone,
@@ -106,7 +120,7 @@ export async function verifyOrganizationAccess(
 
   return {
     organizationId: org.id,
-    organizationName: org.name,
+    organizationName: resolveOrganizationName(org.name, org.settings_json),
     organizationSlug: org.slug,
     role: member.role as OrganizationAccess['role'],
     timezone: org.timezone,

@@ -115,7 +115,7 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
               className="wai-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="ex: Chiara, Marco..."
+              placeholder="es. Sofia, Alex..."
               required
               disabled={readOnly || isPending}
             />
@@ -162,7 +162,7 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
               onChange={(e) => setLanguage(e.target.value)}
               disabled={readOnly || isPending}
             >
-              <option value="it-IT">🇮🇹 Italiano (Italia - Padrão Chiara Studio Aurora)</option>
+              <option value="it-IT">🇮🇹 Italiano</option>
               <option value="pt-BR">🇧🇷 Português (Brasil)</option>
               <option value="en-US">🇺🇸 English (US) - Suporte Futuro</option>
             </select>
@@ -177,7 +177,7 @@ export function AssistantForm({ organizationSlug, initialConfig, readOnly = fals
               className="wai-input"
               value={avatar}
               onChange={(e) => setAvatar(e.target.value)}
-              placeholder="ex: /avatars/chiara.svg"
+              placeholder="es. /avatars/default.svg"
               required
               disabled={readOnly || isPending}
             />

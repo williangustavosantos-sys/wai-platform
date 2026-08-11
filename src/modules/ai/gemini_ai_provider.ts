@@ -24,7 +24,7 @@ export class GeminiAIProvider implements AIProvider {
     try {
         const { text, toolCalls } = await generateText({
       model: google('gemini-3.6-flash'),
-            system: `You are Chiara, a digital employee for ${organizationSlug}. Your job is to classify the user's intent and extract necessary parameters using the provided tools.
+            system: `You are ${config?.name || 'the Digital Employee'} for an organization using WAI. Your job is to classify the user's intent and extract necessary parameters using the provided tools.
             You must NOT perform business logic directly. You must call a tool.
             If the user asks for information not in the tools, call handoff_to_human.`,
             prompt: userText,

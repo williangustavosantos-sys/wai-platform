@@ -21,12 +21,9 @@ export function TenantNavTabs({ organizationSlug, labels }: Props) {
   const basePath = `/app/${organizationSlug}`;
 
   const tabs = [
-    { name: labels.overview, href: basePath, exact: true },
-    { name: `🤖 ${labels.assistant}`, href: `${basePath}/assistant`, exact: true },
-    { name: `💬 ${labels.chat}`, href: `${basePath}/assistant/chat`, exact: true },
-    { name: `👥 ${labels.crm}`, href: `${basePath}/crm`, exact: false },
+    { name: 'Digital Employee', href: `${basePath}/assistant/chat`, exact: true },
     { name: `📅 ${labels.calendar}`, href: `${basePath}/calendar`, exact: false },
-    { name: `⚙️ ${labels.rules}`, href: `${basePath}/rules`, exact: false },
+    { name: 'Impostazioni', href: basePath, exact: true },
   ];
 
   return (

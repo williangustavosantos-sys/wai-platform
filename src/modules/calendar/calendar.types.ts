@@ -1,6 +1,6 @@
-export type ServiceStatus = 'active' | 'archived';
+export type ServiceStatus = 'active' | 'inactive';
 export type ProfessionalStatus = 'active' | 'inactive';
-export type AppointmentStatus = 'held' | 'confirmed' | 'cancelled' | 'completed';
+export type AppointmentStatus = 'held' | 'confirmed' | 'cancelled' | 'completed' | 'no_show' | 'expired';
 
 export interface Service {
   id: string;
@@ -59,13 +59,31 @@ export interface CreateServiceInput {
   name: string;
   description?: string;
   durationMinutes: number;
+  /** Stored as integer cents, matching services.price_cents. */
   price?: number;
+}
+
+export interface UpdateServiceInput {
+  name?: string;
+  description?: string | null;
+  durationMinutes?: number;
+  price?: number;
+  status?: ServiceStatus;
 }
 
 export interface CreateProfessionalInput {
   name: string;
+  title?: string;
   email?: string;
   phone?: string;
+}
+
+export interface UpdateProfessionalInput {
+  name?: string;
+  title?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  status?: ProfessionalStatus;
 }
 
 export interface CreateTimeSlotInput {
@@ -81,4 +99,9 @@ export interface CreateAppointmentInput {
   professionalId: string;
   startAt: string;
   notes?: string;
+}
+
+export interface AppointmentListOptions {
+  startAt?: string;
+  endAt?: string;
 }

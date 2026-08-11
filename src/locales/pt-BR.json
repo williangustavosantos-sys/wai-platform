@@ -17,7 +17,7 @@
     "access_module": "Acessar módulo",
     "modules": {
       "assistant_title": "1. Assistente Digital",
-      "assistant_desc": "Configuração de nome (ex: Chiara), personalidade, tom de comunicação e avatar WAI.",
+      "assistant_desc": "Configuração do nome, personalidade, tom de comunicação e avatar do Digital Employee.",
       "crm_title": "2. CRM Clientes",
       "crm_desc": "Cadastro de clientes com validação padrão E.164 e registro de consentimento de marketing.",
       "calendar_title": "3. Motor de Agenda WAI",
@@ -41,7 +41,7 @@
   },
   "settings_form": {
     "display_name_label": "Nome de Exibição (Display Name)",
-    "display_name_placeholder": "ex: Studio Aurora Contadores",
+    "display_name_placeholder": "ex: Sua empresa",
     "org_language_label": "Idioma Padrão da Organização (Cliente / Atendimento)",
     "theme_label": "Tema da Interface (Preferência)",
     "theme_institutional": "Institucional Escuro (Padrão)",
@@ -71,7 +71,7 @@
     "status_inactive": "⚪ Desativado",
     "form_title": "Configurações Operacionais (Fase 1)",
     "name_label": "Nome do Assistente Digital",
-    "name_placeholder": "ex: Chiara, Marco, Giulia...",
+    "name_placeholder": "ex: Sofia, Alex, Giulia...",
     "tone_select_label": "Tom de Comunicação",
     "tone_cordial": "Cordial e Empático (Recomendado)",
     "tone_formal": "Formal e Institucional",

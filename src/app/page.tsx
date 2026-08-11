@@ -25,7 +25,7 @@ export default async function Home() {
     .single();
 
   if (member && member.organizations && typeof member.organizations === 'object' && 'slug' in member.organizations) {
-    redirect(`/app/${(member.organizations as { slug: string }).slug}`);
+    redirect(`/app/${(member.organizations as { slug: string }).slug}/assistant/chat`);
   }
 
   // Fallback if no membership found
