@@ -27,7 +27,7 @@ function resolveOrganizationName(name: unknown, settingsJson: unknown): string {
     ? settings.displayName.trim()
     : '';
 
-  return legacyDisplayName || 'WAI';
+  return legacyDisplayName || 'Organizzazione';
 }
 
 /**

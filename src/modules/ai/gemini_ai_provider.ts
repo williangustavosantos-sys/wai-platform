@@ -6,6 +6,8 @@ import { DigitalEmployeeConfig } from '../assistant/assistant.types';
 import { ConversationMessage } from '../messages/messages.types';
 import { ToolDefinition } from '../tools/tools.types';
 import { Intent } from '../conversation/conversation.types';
+import { configuredCustomerLanguage, detectCustomerLanguage } from '../conversation/customer_language';
+import { DeterministicResponseGenerator } from './deterministic_response_generator';
 
 const google = createGoogleGenerativeAI({
   apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY || 'dummy_key',
@@ -22,10 +24,17 @@ export class GeminiAIProvider implements AIProvider {
     organizationSlug: string
   ): Promise<AIProviderTurnOutput> {
     try {
+        void _availableTools;
+        void organizationSlug;
+        const fallbackLanguage = configuredCustomerLanguage(config?.language);
+        const customerLanguage = detectCustomerLanguage(userText, fallbackLanguage);
+        const languageName = customerLanguage === 'en' ? 'English' : customerLanguage === 'pt' ? 'Portuguese' : 'Italian';
         const { text, toolCalls } = await generateText({
       model: google('gemini-3.6-flash'),
             system: `You are ${config?.name || 'the Digital Employee'} for an organization using WAI. Your job is to classify the user's intent and extract necessary parameters using the provided tools.
+            The customer's current language is ${languageName}. Reply in ${languageName}; never ask which language they prefer.
             You must NOT perform business logic directly. You must call a tool.
+            A booking request is not complete until createAppointment returns a successful persisted appointment. If booking details are missing, use checkAvailability and ask only for the missing details.
             If the user asks for information not in the tools, call handoff_to_human.`,
             prompt: userText,
             tools: {
@@ -40,10 +49,10 @@ export class GeminiAIProvider implements AIProvider {
                 createAppointment: tool({
                     description: 'Create a new appointment',
                     parameters: z.object({
+                        customerId: z.string(),
                         serviceId: z.string(),
-                        professionalId: z.string().optional(),
-                        dateTime: z.string(),
-                        customerName: z.string()
+                        professionalId: z.string(),
+                        startAt: z.string()
                     }),
                 }),
                 cancelAppointment: tool({
@@ -151,15 +160,15 @@ export class GeminiAIProvider implements AIProvider {
     _history?: ConversationMessage[],
     _customMetadata?: unknown
   ): Promise<string> {
-      if (draftReply) return draftReply;
-      
-      const availResult = toolResults.find(t => (t.toolName || (t as { name?: string }).name) === 'checkAvailability');
-      if (availResult) {
-          if (availResult.isGistOverlapError) {
-              return "[WAI_STEP_SLOTS_EMPTY]\nMi dispiace, questo orario non è più disponibile.";
-          }
-      }
-      
-      return "Richiesta completata.";
+      void _customMetadata;
+      const fallback = configuredCustomerLanguage(config?.language);
+      const previousCustomerText = [...(_history || [])].reverse().find((message) => message.role === 'customer')?.content;
+      const previousLanguage = previousCustomerText ? detectCustomerLanguage(previousCustomerText, fallback) : fallback;
+      const language = detectCustomerLanguage(userText, previousLanguage);
+      const deterministic = new DeterministicResponseGenerator();
+      const verifiedReply = deterministic.generateReply(intent, toolResults, undefined, userText, 'Europe/Rome', language);
+
+      if (toolResults.length || intent !== 'UNKNOWN') return verifiedReply;
+      return draftReply || verifiedReply;
   }
 }

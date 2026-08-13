@@ -64,12 +64,12 @@ export default async function AssistantPage({ params }: Props) {
             </p>
           </div>
           <span className="wai-badge" style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#60A5FA', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
-            Módule / Config (Fase 1)
+            P1 · Config
           </span>
         </div>
       </div>
 
-      <AssistantForm organizationSlug={slug} initialConfig={config} readOnly={readOnly} dict={dict.assistant} />
+      <AssistantForm organizationSlug={slug} initialConfig={config} readOnly={readOnly} dict={dict.assistant_form} />
     </div>
   );
 }

@@ -192,6 +192,11 @@ export async function createMessage(
     return { success: false, error: 'Permessi insufficienti per inviare messaggi in questo tenant.' };
   }
 
+  const conversation = await getConversation(client, userId, organizationSlug, input.conversationId);
+  if (!conversation) {
+    return { success: false, error: 'Conversazione non trovata o non accessibile per questa organizzazione.' };
+  }
+
   const insertPayload = {
     organization_id: access.organizationId,
     conversation_id: input.conversationId,

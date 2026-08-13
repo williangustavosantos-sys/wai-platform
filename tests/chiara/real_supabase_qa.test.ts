@@ -35,9 +35,15 @@ function qaPhone(offset: number): string {
 
 function futureBusinessDate(offset: number): string {
   const date = new Date();
-  date.setUTCDate(date.getUTCDate() + 28 + offset);
+  date.setUTCDate(date.getUTCDate() + 28);
   while (date.getUTCDay() === 0 || date.getUTCDay() === 6) {
     date.setUTCDate(date.getUTCDate() + 1);
+  }
+  for (let businessDay = 0; businessDay < offset; businessDay += 1) {
+    date.setUTCDate(date.getUTCDate() + 1);
+    while (date.getUTCDay() === 0 || date.getUTCDay() === 6) {
+      date.setUTCDate(date.getUTCDate() + 1);
+    }
   }
   return date.toISOString().slice(0, 10);
 }

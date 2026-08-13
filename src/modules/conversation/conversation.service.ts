@@ -1,9 +1,9 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { Logger } from '@/logging/logger';
 import { getAssistantConfig } from '@/modules/assistant/assistant.service';
-import { listConversations, createConversation, listMessages, createMessage } from '@/modules/messages/messages.service';
+import { createConversation, listMessages, createMessage } from '@/modules/messages/messages.service';
 import { GeminiAIProvider } from '@/modules/ai/gemini_ai_provider';
-import { AIProviderContext, ConversationWorkflow, LocalIntentRouter, RoutedEntities } from '@/modules/ai/local_intent_router';
+import { AIProviderContext, ConversationWorkflow, extractCustomerPhone, LocalIntentRouter, RoutedEntities } from '@/modules/ai/local_intent_router';
 import { DeterministicResponseGenerator } from '@/modules/ai/deterministic_response_generator';
 import { ToolResultSummary } from '@/modules/ai/ai.types';
 import { executeToolByName, DEFINED_TOOLS } from '@/modules/tools/tools.service';
@@ -11,6 +11,7 @@ import { listServices, listProfessionals } from '@/modules/calendar/calendar.ser
 import { listCustomers, normalizePhoneNumber } from '@/modules/crm/crm.service';
 import { verifyOrganizationAccess } from '@/security/auth';
 import { ConversationTurnResult, ChannelAdapter, ToolCallTelemetry, TrustedConversationContext } from './conversation.types';
+import { resolveCustomerLanguage } from './customer_language';
 
 function workflowEntities(entities: RoutedEntities): NonNullable<ConversationWorkflow['entities']> {
   const {
@@ -22,6 +23,7 @@ function workflowEntities(entities: RoutedEntities): NonNullable<ConversationWor
     requestedCustomerName,
     requestedCustomerFirstName,
     requestedCustomerLastName,
+    requestedCustomerPhone,
   } = entities;
 
   return {
@@ -33,15 +35,31 @@ function workflowEntities(entities: RoutedEntities): NonNullable<ConversationWor
     ...(requestedCustomerName ? { requestedCustomerName } : {}),
     ...(requestedCustomerFirstName ? { requestedCustomerFirstName } : {}),
     ...(requestedCustomerLastName ? { requestedCustomerLastName } : {}),
+    ...(requestedCustomerPhone ? { requestedCustomerPhone } : {}),
   };
 }
 
-function deriveConversationWorkflow(history: Array<{ role: string; content: string }>, router: LocalIntentRouter, context: AIProviderContext): ConversationWorkflow | undefined {
+function deriveConversationWorkflow(
+  history: Array<{ role: string; content: string; metadata?: Record<string, unknown> }>,
+  router: LocalIntentRouter,
+  context: AIProviderContext,
+): ConversationWorkflow | undefined {
   let workflow: ConversationWorkflow | undefined;
 
   for (const message of history) {
+    if (message.role === 'assistant') {
+      const rawToolCalls = message.metadata?.toolCalls;
+      const toolCalls = Array.isArray(rawToolCalls) ? rawToolCalls as Array<Record<string, unknown>> : [];
+      const completedBooking = toolCalls.some((call) => {
+        if (call.toolName !== 'createAppointment') return false;
+        const result = call.result as { success?: boolean; code?: string } | undefined;
+        return result?.success === true && result.code === 'APPOINTMENT_CREATED';
+      });
+      if (completedBooking) workflow = undefined;
+      continue;
+    }
     if (message.role !== 'customer') continue;
-    const route = router.route(message.content, { ...context, workflow: undefined });
+    const route = router.route(message.content, { ...context, workflow });
     const entities = workflowEntities(route.entities);
     const hasEntities = Object.keys(entities).length > 0;
 
@@ -90,29 +108,26 @@ export async function processConversationTurn(
 
   // 2. Resolver ou criar conversa no banco (RLS por organizationSlug)
   if (!conversationId) {
-    const existing = await listConversations(client, userId, organizationSlug, 'active');
-    const sameChannel = existing.find(c => c.channel === channelAdapter.channelName);
-    if (sameChannel) {
-      conversationId = sameChannel.id;
-    } else {
-      const created = await createConversation(client, adminClient, userId, organizationSlug, {
-        channel: channelAdapter.channelName,
-        status: 'active'
-      }, correlationId);
-      if (!created.success || !created.data) {
-        throw new Error(created.error || 'Impossibile avviare la conversazione.');
-      }
-      conversationId = created.data.id;
+    const created = await createConversation(client, adminClient, userId, organizationSlug, {
+      channel: channelAdapter.channelName,
+      status: 'active'
+    }, correlationId);
+    if (!created.success || !created.data) {
+      throw new Error(created.error || 'Impossibile avviare la conversazione.');
     }
+    conversationId = created.data.id;
   }
 
   // 3. Persistir mensagem do cliente (Role: 'customer') sob auditoria/RLS
-  await createMessage(client, adminClient, userId, organizationSlug, {
+  const customerMessage = await createMessage(client, adminClient, userId, organizationSlug, {
     conversationId,
     role: 'customer',
     content: messageData.text,
     metadata: { channel: channelAdapter.channelName }
   }, correlationId);
+  if (!customerMessage.success) {
+    throw new Error(customerMessage.error || 'Impossibile registrare il messaggio del cliente.');
+  }
 
   // 4. Carregar contexto da empresa (Configurazione Assistente e Cronologia Messaggi)
   const [config, history] = await Promise.all([
@@ -126,14 +141,26 @@ export async function processConversationTurn(
   const professionals = await listProfessionals(client, userId, organizationSlug);
   const customers = await listCustomers(client, userId, organizationSlug);
 
-  const normPhone = messageData.customerPhone ? messageData.customerPhone.replace(/\D/g, '') : '';
+  const currentMessageIndex = history.map(message => message.role === 'customer' && message.content === messageData.text).lastIndexOf(true);
+  const workflowHistory = currentMessageIndex >= 0 ? history.slice(0, currentMessageIndex) : history;
+  const previousTextPhone = [...workflowHistory]
+    .reverse()
+    .filter((message) => message.role === 'customer')
+    .map((message) => extractCustomerPhone(message.content))
+    .find((phone): phone is string => Boolean(phone));
+  const suppliedPhone = messageData.customerPhone || extractCustomerPhone(messageData.text) || previousTextPhone;
+  const normalizedPhone = suppliedPhone ? normalizePhoneNumber(suppliedPhone).normalized : null;
+  const customerLanguage = resolveCustomerLanguage(
+    messageData.text,
+    workflowHistory,
+    access.locale || config?.language,
+  );
   const isOrganizationStaff = trustedContext?.source === 'organization_workspace'
     && (access.role === 'organization_owner' || access.role === 'organization_operator');
 
-  const verifiedCustomer = normPhone ? customers.find(c => {
-    const cPhone = (c.phoneNormalized || '').replace(/\D/g, '');
-    return cPhone && (cPhone === normPhone || cPhone.includes(normPhone) || normPhone.includes(cPhone));
-  }) : undefined;
+  const verifiedCustomer = normalizedPhone
+    ? customers.find((customer) => customer.phoneNormalized === normalizedPhone)
+    : undefined;
 
   const baseContext: AIProviderContext = {
     organization: { timezone: access.timezone },
@@ -143,8 +170,6 @@ export async function processConversationTurn(
     customer: verifiedCustomer,
     isOwner: isOrganizationStaff
   };
-  const currentMessageIndex = history.map(message => message.role === 'customer' && message.content === messageData.text).lastIndexOf(true);
-  const workflowHistory = currentMessageIndex >= 0 ? history.slice(0, currentMessageIndex) : history;
   const workflow = deriveConversationWorkflow(workflowHistory, localRouter, baseContext);
   const context: AIProviderContext = { ...baseContext, workflow };
 
@@ -152,9 +177,7 @@ export async function processConversationTurn(
   
   let detectedIntent = localRoute.intent;
   let rawToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
-  let aiProviderUsed = false;
   let providerName = 'LocalIntentRouter';
-  let replyDraft = '';
 
   const isOfflineMode = !process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.OFFLINE_AI_TEST === 'true';
 
@@ -168,10 +191,8 @@ export async function processConversationTurn(
     });
     detectedIntent = localRoute.intent;
     rawToolCalls = localRouter.convertToToolCalls(localRoute, access.timezone);
-    aiProviderUsed = false;
   } else {
     logger.info('Falling back to Gemini AI provider', { reason: localRoute.needsClarification ? 'clarification_needed' : 'low_confidence' });
-    aiProviderUsed = true;
     const aiProvider = new GeminiAIProvider();
     providerName = aiProvider.providerName;
     try {
@@ -184,12 +205,10 @@ export async function processConversationTurn(
       );
       detectedIntent = aiOutput.detectedIntent;
       rawToolCalls = aiOutput.toolCalls;
-      replyDraft = aiOutput.replyText;
     } catch (error) {
       logger.error('Gemini AI Provider failed, falling back to local deterministic mapping', { error });
       detectedIntent = localRoute.intent;
       rawToolCalls = localRouter.convertToToolCalls(localRoute, access.timezone);
-      aiProviderUsed = false;
     }
   }
 
@@ -197,6 +216,9 @@ export async function processConversationTurn(
   if (localRoute.entities.potentiallyDangerous) {
     rawToolCalls = [];
     policyDecision = { success: false, code: 'SENSITIVE_REQUEST_DENIED' };
+  } else if (localRoute.entities.conflictingActions) {
+    rawToolCalls = [];
+    policyDecision = { success: false, code: 'CONFLICTING_ACTIONS' };
   } else if (localRoute.entities.thirdPartyRequest && (detectedIntent === 'CANCEL_APPOINTMENT' || detectedIntent === 'RESCHEDULE_APPOINTMENT' || detectedIntent === 'CUSTOMER_INFORMATION')) {
     rawToolCalls = [];
     policyDecision = { success: false, code: 'THIRD_PARTY_ACTION_DENIED' };
@@ -221,15 +243,38 @@ export async function processConversationTurn(
       resolvedArgs.professionalId = professionals[0]?.id || '';
     }
 
+    if (call.name === 'createAppointment') {
+      const availability = [...toolResults].reverse().find((result) => result.toolName === 'checkAvailability');
+      const availabilityData = availability?.result && typeof availability.result === 'object'
+        ? availability.result as Record<string, unknown>
+        : {};
+      const requestedTime = localRoute.entities.time;
+
+      if (resolvedArgs.professionalId === 'ANY') {
+        const slotDetails = Array.isArray(availabilityData.slotsDetails)
+          ? availabilityData.slotsDetails as Array<Record<string, unknown>>
+          : [];
+        const matchingSlot = slotDetails.find((slot) => slot.time === requestedTime && typeof slot.professionalId === 'string');
+        resolvedArgs.professionalId = matchingSlot?.professionalId || '';
+        if (!resolvedArgs.professionalId) {
+          const error = 'Non è stato possibile associare un professionista disponibile allo slot scelto.';
+          const result = { success: false, code: 'PROFESSIONAL_SELECTION_REQUIRED', error };
+          telemetry.push({ toolName: call.name, arguments: resolvedArgs, result, executionTimeMs: Date.now() - t0 });
+          toolResults.push({ toolName: call.name, args: resolvedArgs, success: false, code: result.code, error });
+          continue;
+        }
+      }
+    }
+
     // Resolve phone for findCustomer if missing
     if (call.name === 'findCustomer' && (!resolvedArgs.phone || resolvedArgs.phone === 'RESOLVED_FROM_CRM')) {
-      resolvedArgs.phone = messageData.customerPhone || '';
+      resolvedArgs.phone = suppliedPhone || '';
     }
 
     if (call.name === 'createAppointment' && !resolvedCustomerId && !resolvedArgs.customerId) {
       const firstName = localRoute.entities.requestedCustomerFirstName;
       const lastName = localRoute.entities.requestedCustomerLastName;
-      const phone = messageData.customerPhone;
+      const phone = localRoute.entities.requestedCustomerPhone || suppliedPhone;
 
       if (!firstName || !lastName || !phone) {
         const error = 'Per prenotare è necessario indicare nome, cognome e un numero di telefono verificabile.';
@@ -267,7 +312,7 @@ export async function processConversationTurn(
     // Resolve business identifiers only from verified or freshly created CRM state.
     if (resolvedArgs.customerId === 'RESOLVED_FROM_CRM' || (call.name === 'createAppointment' && !resolvedArgs.customerId)) {
       if (!resolvedCustomerId) {
-        const match = messageData.customerPhone ? customers.find(c => c.phoneNormalized === messageData.customerPhone || c.phoneNormalized.includes(messageData.customerPhone!)) : null;
+        const match = normalizedPhone ? customers.find(c => c.phoneNormalized === normalizedPhone) : null;
         resolvedCustomerId = match ? match.id : undefined;
       }
       if (resolvedCustomerId) {
@@ -283,26 +328,34 @@ export async function processConversationTurn(
     if (call.name === 'cancelAppointment' || call.name === 'rescheduleAppointment') {
       if (!resolvedArgs.appointmentId || resolvedArgs.appointmentId === 'AUTO_RESOLVE' || resolvedArgs.appointmentId === 'RESOLVED_FROM_CRM') {
         if (!resolvedCustomerId) {
-          const match = messageData.customerPhone ? customers.find(c => c.phoneNormalized === messageData.customerPhone || c.phoneNormalized.includes(messageData.customerPhone!)) : null;
-          resolvedCustomerId = match ? match.id : (customers[0]?.id || undefined);
+          const match = normalizedPhone ? customers.find(c => c.phoneNormalized === normalizedPhone) : null;
+          resolvedCustomerId = match?.id;
+        }
+        if (!resolvedCustomerId) {
+          const error = 'Per modificare o cancellare un appuntamento è necessario usare il recapito verificato del titolare.';
+          const result = { success: false, code: 'CUSTOMER_IDENTITY_REQUIRED', error };
+          telemetry.push({ toolName: call.name, arguments: resolvedArgs, result, executionTimeMs: Date.now() - t0 });
+          toolResults.push({ toolName: call.name, args: resolvedArgs, success: false, code: result.code, error });
+          continue;
         }
         if (resolvedCustomerId) {
           const { data: appts } = await client
             .from('appointments')
             .select('*')
             .eq('customer_id', resolvedCustomerId)
-            .in('status', ['confirmed', 'held', 'pending']);
+            .in('status', ['confirmed', 'held']);
           
-          const activeAppointments = (appts || []).sort((a: any, b: any) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime());
+          const activeAppointments = ((appts || []) as Array<{ id: string; start_at: string }>).sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime());
           const requestedDate = typeof resolvedArgs.date === 'string' ? resolvedArgs.date : undefined;
-          const matchingDate = requestedDate ? activeAppointments.filter((appointment: any) => appointment.start_at.startsWith(requestedDate)) : [];
+          const matchingDate = requestedDate ? activeAppointments.filter((appointment) => appointment.start_at.startsWith(requestedDate)) : [];
           const selectedAppointment = matchingDate[0] || activeAppointments[0];
           if (selectedAppointment) {
             resolvedArgs.appointmentId = selectedAppointment.id;
           } else {
             const errDesc = 'Nessun appuntamento attivo trovato da modificare o cancellare.';
-            telemetry.push({ toolName: call.name, arguments: resolvedArgs, result: { success: false, error: errDesc }, executionTimeMs: Date.now() - t0 });
-            toolResults.push({ toolName: call.name, success: false, error: errDesc });
+            const result = { success: false, code: 'APPOINTMENT_NOT_FOUND', error: errDesc };
+            telemetry.push({ toolName: call.name, arguments: resolvedArgs, result, executionTimeMs: Date.now() - t0 });
+            toolResults.push({ toolName: call.name, success: false, code: result.code, error: errDesc });
             continue;
           }
         }
@@ -365,28 +418,15 @@ export async function processConversationTurn(
   }
 
   // 7. Guardrails: A resposta final é sintetizada ESCLUSIVAMENTE a partir dos resultados transacionados no banco
-  let finalReply = '';
-  if (aiProviderUsed) {
-    const aiProvider = new GeminiAIProvider();
-    try {
-      finalReply = await aiProvider.generateReplyFromToolResults(
-        config,
-        detectedIntent,
-        messageData.text,
-        toolResults,
-        organizationSlug,
-        replyDraft,
-        history
-      );
-    } catch (e) {
-      logger.error('Gemini AI Provider failed generating reply, falling back to deterministic', { error: e });
-      const deterministicGen = new DeterministicResponseGenerator();
-      finalReply = deterministicGen.generateReply(detectedIntent, toolResults, localRoute.entities, messageData.text, access.timezone);
-    }
-  } else {
-    const deterministicGen = new DeterministicResponseGenerator();
-    finalReply = deterministicGen.generateReply(detectedIntent, toolResults, localRoute.entities, messageData.text, access.timezone);
-  }
+  const deterministicGen = new DeterministicResponseGenerator();
+  const finalReply = deterministicGen.generateReply(
+    detectedIntent,
+    toolResults,
+    localRoute.entities,
+    messageData.text,
+    access.timezone,
+    customerLanguage,
+  );
 
   const processingTimeMs = Date.now() - startTime;
   const finalMetadata = {
@@ -394,15 +434,19 @@ export async function processConversationTurn(
     toolCalls: telemetry,
     processingTimeMs,
     provider: providerName,
+    customerLanguage,
     ...(policyDecision ? { policyDecision } : {}),
   };
 
-  await createMessage(client, adminClient, userId, organizationSlug, {
+  const assistantMessage = await createMessage(client, adminClient, userId, organizationSlug, {
     conversationId,
     role: 'assistant',
     content: finalReply,
     metadata: finalMetadata
   }, correlationId);
+  if (!assistantMessage.success) {
+    throw new Error(assistantMessage.error || 'Impossibile registrare la risposta del collaboratore digitale.');
+  }
 
   // 9. Enviar resposta através do Canal correspondente
   await channelAdapter.sendReply(conversationId, finalReply);

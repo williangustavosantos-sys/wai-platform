@@ -58,6 +58,7 @@ export interface RoutedEntities {
   requestedCustomerName?: string;
   requestedCustomerFirstName?: string;
   requestedCustomerLastName?: string;
+  requestedCustomerPhone?: string;
   requestedPhoneChange?: boolean;
   // Owner command entities
   ownerCommandType?: 'list_agenda' | 'block_calendar' | 'move_appointment' | 'get_stats';
@@ -68,7 +69,7 @@ export interface RoutedEntities {
 
 export interface ConversationWorkflow {
   intent?: 'CHECK_AVAILABILITY' | 'RESCHEDULE_APPOINTMENT';
-  entities?: Pick<RoutedEntities, 'service' | 'professional' | 'date' | 'time' | 'timePeriod' | 'requestedCustomerName' | 'requestedCustomerFirstName' | 'requestedCustomerLastName'>;
+  entities?: Pick<RoutedEntities, 'service' | 'professional' | 'date' | 'time' | 'timePeriod' | 'requestedCustomerName' | 'requestedCustomerFirstName' | 'requestedCustomerLastName' | 'requestedCustomerPhone'>;
 }
 
 export interface StructuredIntentRoute {
@@ -220,10 +221,13 @@ function extractTime(text: string): Pick<RoutedEntities, 'time' | 'timePeriod'> 
 }
 
 function extractSelfIdentifiedName(userText: string): Pick<RoutedEntities, 'requestedCustomerName' | 'requestedCustomerFirstName' | 'requestedCustomerLastName'> {
-  const match = userText.match(/\b(?:mi\s+chiamo|sono)\s+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'’-]+){0,3})/i);
+  const match = userText.match(/\b(?:mi\s+chiamo|sono|my\s+name\s+is|i\s+am|i['’]m|meu\s+nome\s+[ée]|me\s+chamo|chamo-me|sou)\s+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'’-]+){0,4})/i);
   if (!match) return {};
 
-  const name = match[1].trim().replace(/[.,;:!?]+$/, '');
+  const name = match[1]
+    .split(/\s+(?:e\s+(?:il\s+)?mio|and\s+my|e\s+o\s+meu|minha|my|meu)?\s*(?:telefono|cellulare|phone|mobile|telefone|telem[oó]vel|tel)\b/i)[0]
+    .trim()
+    .replace(/[.,;:!?]+$/, '');
   const parts = name.split(/\s+/).filter(Boolean);
   if (parts.length === 0) return {};
 
@@ -234,23 +238,51 @@ function extractSelfIdentifiedName(userText: string): Pick<RoutedEntities, 'requ
   };
 }
 
+export function extractCustomerPhone(userText: string): string | undefined {
+  const international = userText.match(/(?:^|\s)((?:\+|00)[1-9]\d[\d\s()./-]{5,}\d)(?=$|\s|[,;!?])/);
+  if (international) return international[1].trim();
+
+  const labelled = userText.match(/\b(?:telefono|cellulare|phone|mobile|telefone|telem[oó]vel|tel)\s*(?:è|e|is|:)?\s*(\d[\d\s()./-]{6,}\d)/i);
+  return labelled?.[1]?.trim();
+}
+
 function significantTokens(value: string): string[] {
   return normalizeNaturalLanguage(value)
     .split(' ')
     .filter((token) => token.length >= 4 && !STOP_WORDS.has(token));
 }
 
+const CONCEPT_ALIASES: Array<[RegExp, string]> = [
+  [/^(?:consulenz\w*|consultation|consulting|consultoria|consulta)$/, 'consultation'],
+  [/^(?:fiscal\w*|tax|taxes|tasse|impost\w*|tribut\w*|iva|partita|forfettari\w*)$/, 'tax'],
+  [/^(?:contabil\w*|accounting|accountant|commercialista)$/, 'accounting'],
+];
+
+const CONCEPT_NAMES = new Set(CONCEPT_ALIASES.map(([, concept]) => concept));
+
+function conceptTokens(value: string): string[] {
+  return normalizeNaturalLanguage(value).split(' ').map((rawToken) => {
+    const token = rawToken.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
+    const alias = CONCEPT_ALIASES.find(([pattern]) => pattern.test(token));
+    return alias?.[1] || token;
+  }).filter((token) => (token.length >= 4 || CONCEPT_NAMES.has(token)) && !STOP_WORDS.has(token));
+}
+
+function catalogMatchScore(text: string, entryName: string): number {
+  const normalizedName = normalizeNaturalLanguage(entryName);
+  if (normalizedName && text.includes(normalizedName)) return 20;
+
+  const inputConcepts = new Set(conceptTokens(text));
+  return conceptTokens(entryName).reduce((score, token) => score + (inputConcepts.has(token) ? 2 : 0), 0);
+}
+
 function matchCatalogEntity<T extends { id: string; name: string }>(text: string, entries: T[]): T | undefined {
-  let best: { entry: T; score: number } | undefined;
-  for (const entry of entries) {
-    const normalizedName = normalizeNaturalLanguage(entry.name);
-    const tokens = significantTokens(entry.name);
-    const score = normalizedName && text.includes(normalizedName)
-      ? 10
-      : tokens.reduce((total, token) => total + (text.includes(token) ? 1 : 0), 0);
-    if (score > 0 && (!best || score > best.score)) best = { entry, score };
-  }
-  return best?.entry;
+  const ranked = entries
+    .map((entry) => ({ entry, score: catalogMatchScore(text, entry.name) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (!ranked.length || (ranked[1] && ranked[0].score === ranked[1].score)) return undefined;
+  return ranked[0].entry;
 }
 
 function detectFaqTopic(text: string): FaqTopic | undefined {
@@ -289,11 +321,7 @@ export class LocalIntentRouter {
     const dateEntity = extractDate(text, timezone);
     const timeEntity = extractTime(text);
     const catalogServices = context?.services || [];
-    const matchedServices = catalogServices.filter((entry) => {
-      const normalizedName = normalizeNaturalLanguage(entry.name);
-      const tokens = significantTokens(entry.name);
-      return text.includes(normalizedName) || tokens.some((token) => text.includes(token));
-    });
+    const matchedServices = catalogServices.filter((entry) => catalogMatchScore(text, entry.name) > 0);
     const service = matchCatalogEntity(text, catalogServices);
     const professional = matchCatalogEntity(text, context?.professionals || []);
     const professionalName = professional ? normalizeNaturalLanguage(professional.name) : '';
@@ -303,7 +331,7 @@ export class LocalIntentRouter {
       new RegExp(`\\b(?:dott\\w*|dr)\\.?\\s+${professionalPersonName.replace(/\s+/g, '\\s+')}\\b`),
     ]));
     const namedCustomers = (context?.customers || []).filter((customer) => {
-      const cName = customer.name || `${(customer as any).firstName || ''} ${(customer as any).lastName || ''}`.trim();
+      const cName = customer.name || `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
       const fullName = normalizeNaturalLanguage(cName);
       const tokens = significantTokens(cName);
       const matched = text.includes(fullName) || (tokens.length >= 2 && tokens.every((token) => text.includes(token)));
@@ -316,10 +344,21 @@ export class LocalIntentRouter {
     const verifiedCustomer = context?.customer;
     const namedCustomer = namedCustomers.length === 1 ? namedCustomers[0] : undefined;
     const verifiedCustomerName = verifiedCustomer
-      ? `${(verifiedCustomer as any).firstName || ''} ${(verifiedCustomer as any).lastName || ''}`.trim()
+      ? `${verifiedCustomer.firstName || ''} ${verifiedCustomer.lastName || ''}`.trim()
       : '';
+    const selfIdentifiedName = extractSelfIdentifiedName(userText);
+    const verifiedName = normalizeNaturalLanguage(verifiedCustomerName);
+    const claimedName = normalizeNaturalLanguage(selfIdentifiedName.requestedCustomerName || '');
+    const completeClaimConflicts = Boolean(
+      verifiedCustomer
+      && selfIdentifiedName.requestedCustomerLastName
+      && verifiedName
+      && claimedName
+      && claimedName !== verifiedName
+      && /\b(prenot\w*|book\w*|agendar|marcar)\b/.test(text),
+    );
     const customerConflict = Boolean(verifiedCustomer && namedCustomer && verifiedCustomer.id !== namedCustomer.id)
-      || Boolean(verifiedCustomer && text.includes('giovanni rossi') && verifiedCustomerName.toLowerCase().includes('marco rossi'));
+      || completeClaimConflicts;
 
     const entities: RoutedEntities = {
       ...(context?.workflow?.entities || {}),
@@ -330,7 +369,7 @@ export class LocalIntentRouter {
       ...(verifiedCustomer || namedCustomer ? {
         customer: {
           id: verifiedCustomer?.id || namedCustomer?.id,
-          name: verifiedCustomer?.name || (namedCustomer ? `${(namedCustomer as any).firstName || ''} ${(namedCustomer as any).lastName || ''}`.trim() : undefined),
+          name: verifiedCustomer?.name || (namedCustomer ? `${namedCustomer.firstName || ''} ${namedCustomer.lastName || ''}`.trim() : undefined),
           verified: Boolean(verifiedCustomer),
           conflictsWithVerifiedCustomer: customerConflict,
         },
@@ -341,8 +380,9 @@ export class LocalIntentRouter {
         /\b(per conto di|a nome (?:di|mio)|mio fratello|mia sorella|mia moglie|mio marito|moglie di|marito di|un parente)\b/,
       ]) ? { thirdPartyRequest: true } : {}),
       ...(/\b(anonim\w*|senza dare (?:il )?mio cognome)\b/.test(text) ? { anonymousRequest: true } : {}),
-      ...extractSelfIdentifiedName(userText),
-      ...(/\b(?:associare|cambiare|modificare)\b.*\b(?:numero|telefono)\b|\b(?:numero|telefono)\b.*\b(?:associare|cambiare|modificare)\b/.test(text) ? { requestedPhoneChange: true } : {}),
+      ...selfIdentifiedName,
+      ...(extractCustomerPhone(userText) ? { requestedCustomerPhone: extractCustomerPhone(userText) } : {}),
+      ...(/\b(?:associ\w*|cambi\w*|modific\w*)\b.*\b(?:numero|telefono)\b|\b(?:numero|telefono)\b.*\b(?:associ\w*|cambi\w*|modific\w*)\b/.test(text) ? { requestedPhoneChange: true } : {}),
     };
 
     const instructionOrSecretExtraction = containsAny(text, [
@@ -442,8 +482,8 @@ export class LocalIntentRouter {
     const rescheduleSignal = /\b(spostare|rimandare|riprogrammare|reschedule|remarcar)\b/.test(text);
     const workflowIntent = context?.workflow?.intent;
     const hypothetical = /\b(posso|potrei|se |quanto tempo|come funziona|come posso)\b/.test(text);
-    const explicitBookingAction = /\b(ho bisogno|mi serve|devo|vorrei parlare|quero marcar|need an appointment)\b/.test(text);
-    const preliminaryBookingSignal = /\b(prenot\w*|appuntament\w*|fiss\w*|incontro|visita|consulta|agendamento|appointment|marcar|vorrei vederlo|mi serve|ho bisogno|devo(?: farmi)?|vorrei parlare|rns|app x)\b/.test(text);
+    const explicitBookingAction = /\b(ho bisogno|mi serve|devo|vorrei parlare|quero marcar|gostaria de marcar|need an appointment|would like to book|i want to book)\b/.test(text);
+    const preliminaryBookingSignal = /\b(prenot\w*|appuntament\w*|fiss\w*|incontro|visita|consulta|consultation|booking|book|schedule|reserve|agend\w*|appointment|marcar|reservar|vorrei vederlo|mi serve|ho bisogno|devo(?: farmi)?|vorrei parlare|rns|app x)\b/.test(text);
     if ((faqTopic === 'professionals' || faqTopic === 'social')
       && (explicitBookingAction || preliminaryBookingSignal)) faqTopic = undefined;
     if (faqTopic === 'booking_policy' && !hypothetical
@@ -495,9 +535,21 @@ export class LocalIntentRouter {
       };
     }
 
-    const availabilitySignal = /\b(disponibil\w*|posto|posti|liber\w|orari\w*|avete posto|quando posso|meno affollato)\b/.test(text);
+    const availabilitySignal = /\b(disponibil\w*|availability|available|posto|posti|liber\w|orari\w*|slots?|times?|avete posto|quando posso|menos? ocupado|menos? cheio|meno affollato)\b/.test(text);
     const bookingSignal = preliminaryBookingSignal;
-    const domainSignal = Boolean(service) || /\b(consulenza|fiscale|tasse|bilancio|commercialista|partita iva)\b/.test(text);
+    const domainSignal = Boolean(service) || /\b(consulenza|consultation|consultoria|consulta|fiscal\w*|tax|taxes|tasse|impost\w*|bilancio|accounting|accountant|contabil\w*|commercialista|partita iva)\b/.test(text);
+
+    const continuingBooking = workflowIntent === 'CHECK_AVAILABILITY' || bookingSignal || availabilitySignal;
+    if (continuingBooking && !entities.service && catalogServices.length === 1) {
+      entities.service = { id: catalogServices[0].id, name: catalogServices[0].name };
+    }
+    if (continuingBooking && !entities.professional && (context?.professionals.length || 0) === 1) {
+      const onlyProfessional = context!.professionals[0];
+      entities.professional = { id: onlyProfessional.id, name: onlyProfessional.name };
+    }
+    if (continuingBooking && /\b(primo disponibile|qualsiasi|anyone|any professional|first available|qualquer profissional|primeiro disponivel)\b/.test(text)) {
+      entities.professional = { id: 'ANY', name: 'First available' };
+    }
 
     const hasDateTime = entities.date && entities.time;
     if (workflowIntent === 'CHECK_AVAILABILITY' && (entities.date || entities.service || entities.professional || entities.time)) {
@@ -522,7 +574,7 @@ export class LocalIntentRouter {
         return {
           intent: 'CHECK_AVAILABILITY',
           entities,
-          confidence: availabilitySignal ? 0.9 : 0.78,
+          confidence: availabilitySignal || bookingSignal ? 0.9 : 0.78,
           needsClarification: Boolean(entities.invalidDate),
         };
       }
@@ -593,7 +645,15 @@ export class LocalIntentRouter {
       if (hasDateTime) {
         args.startAt = organizationLocalDateTimeToUtc(`${e.date}T${e.time}:00`, organizationTimezone) || '';
       }
-      return [{ name: 'createAppointment', args }];
+      const availabilityArgs: Record<string, unknown> = {
+        date: e.date,
+        serviceId: args.serviceId,
+        professionalId: args.professionalId,
+      };
+      return [
+        { name: 'checkAvailability', args: availabilityArgs },
+        { name: 'createAppointment', args },
+      ];
     }
     
     if (route.intent === 'CANCEL_APPOINTMENT') {

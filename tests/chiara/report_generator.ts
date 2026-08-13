@@ -50,7 +50,7 @@ export function generateReport(results: TestResult[], baselineInfo: string) {
     const catE = getCategoryStats('E_FAQ');
     const catF = getCategoryStats('F_NATURAL_LANGUAGE');
     
-    const isReady = 
+    const automatedRegressionPassed =
        (catC.total > 0 && catC.passed > 0 && catC.failed === 0) && // Identity Security 100%
        (catD.total > 0 && catD.passed > 0 && catD.failed === 0) && // Calendar 100%
        (catB.total > 0 && catB.passed > 0 && catB.failed === 0) && // Customer Association 100%
@@ -59,7 +59,9 @@ export function generateReport(results: TestResult[], baselineInfo: string) {
        (catF.passed / Math.max(1, catF.passed + catF.failed) >= 0.90) && // NLP >= 90%
        notConfiguredHallucinated === 0;
 
-    let finalDecision = isReady ? 'READY FOR CONTROLLED PILOT' : 'NOT READY FOR PILOT';
+    let finalDecision = automatedRegressionPassed
+        ? 'AUTOMATED REGRESSION PASS — HUMAN ACCEPTANCE PENDING'
+        : 'AUTOMATED REGRESSION FAIL';
 
     if (catC.blocked === catC.total || catC.total === 0 ||
         catD.blocked === catD.total || catD.total === 0 ||

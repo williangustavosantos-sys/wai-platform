@@ -183,7 +183,7 @@ export default function ChatSimulatorView({ organizationSlug, organizationName, 
 
   const quickPrompts = [
     "Vorrei prenotare una consulenza fiscale",
-    "Per domani alle 10:00, sono Giovanni Verdi tel +393401122333",
+    "Per domani alle 10:00",
     "Quali sono i vostri servizi e regole?",
     "Vorrei parlare con un operatore umano"
   ];

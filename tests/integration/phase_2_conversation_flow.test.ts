@@ -1,7 +1,37 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { processConversationTurn } from '../../src/modules/conversation/conversation.service';
 import { WebChatAdapter } from '../../src/modules/conversation/webchat_adapter';
+import { executeToolByName } from '../../src/modules/tools/tools.service';
 import { SupabaseClient } from '@supabase/supabase-js';
+
+vi.mock('../../src/modules/tools/tools.service', async () => {
+  const actual = await vi.importActual<typeof import('../../src/modules/tools/tools.service')>('../../src/modules/tools/tools.service');
+  return {
+    ...actual,
+    executeToolByName: vi.fn().mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name === 'checkAvailability') {
+        return {
+          success: true,
+          code: 'AVAILABILITY_FOUND',
+          result: {
+            date: args.date,
+            availableSlots: ['10:00'],
+            slotsDetails: [{ time: '10:00', professionalId: 'prof-aurora-marco', professionalName: 'Dr. Marco Rossi' }],
+          },
+        };
+      }
+      if (name === 'createAppointment') {
+        return {
+          success: true,
+          code: 'APPOINTMENT_CREATED',
+          appointmentId: 'appt-20260802-001',
+          result: { appointment: { id: 'appt-20260802-001', startAt: args.startAt } },
+        };
+      }
+      return actual.executeToolByName(name, args, {} as SupabaseClient, {} as SupabaseClient, 'user-admin-aurora', 'studio-aurora');
+    }),
+  };
+});
 
 describe('Phase 2 Integration: WAI Conversation Engine & Commercial Assistant MVP Flow', () => {
   let mockAdminClient: SupabaseClient;
@@ -13,11 +43,12 @@ describe('Phase 2 Integration: WAI Conversation Engine & Commercial Assistant MV
   let conversationsStore: unknown[];
 
   beforeEach(() => {
+    vi.clearAllMocks();
     auditLogsStore = [];
     messagesStore = [];
     appointmentsStore = [];
     customersStore = [
-      { id: 'cust-111', organization_id: 'org-aurora-id', first_name: 'Mario', last_name: 'Rossi', phone: '+393401122333', email: 'mario@test.it', status: 'active' }
+      { id: 'cust-111', organization_id: 'org-aurora-id', first_name: 'Mario', last_name: 'Rossi', phone: '+393401122333', phone_normalized: '+393401122333', email: 'mario@test.it', status: 'active' }
     ];
     conversationsStore = [
       { id: 'conv-001', organization_id: 'org-aurora-id', customer_id: null, channel: 'webchat', status: 'active', created_at: new Date().toISOString() }
@@ -106,22 +137,19 @@ describe('Phase 2 Integration: WAI Conversation Engine & Commercial Assistant MV
         }
         if (table === 'conversations') {
           return {
-            select: vi.fn().mockImplementation(() => ({
-              eq: vi.fn().mockImplementation((col: string, val: string) => {
-                if (col === 'id') {
-                  return {
-                    single: vi.fn().mockResolvedValue({
-                      data: conversationsStore.find(c => (c as any).id === val) || null,
-                      error: null
-                    })
-                  };
-                }
-                return {
-                  eq: vi.fn().mockResolvedValue({ data: conversationsStore, error: null }),
-                  single: vi.fn().mockResolvedValue({ data: conversationsStore[0], error: null })
-                };
-              })
-            })),
+            select: vi.fn().mockImplementation(() => {
+              let current = [...conversationsStore] as Array<Record<string, unknown>>;
+              const chain: any = {
+                eq: vi.fn().mockImplementation((col: string, val: unknown) => {
+                  current = current.filter((conversation) => conversation[col] === val);
+                  return chain;
+                }),
+                order: vi.fn().mockImplementation(() => chain),
+                single: vi.fn().mockImplementation(async () => ({ data: current[0] || null, error: current[0] ? null : { message: 'Not found' } })),
+                then: (resolve: (result: { data: unknown[]; error: null }) => unknown) => resolve({ data: current, error: null }),
+              };
+              return chain;
+            }),
             insert: vi.fn().mockImplementation((record: any) => {
               const item = Array.isArray(record) ? record[0] : record;
               const newConv = { ...item, id: 'conv-002', created_at: new Date().toISOString() };
@@ -263,9 +291,10 @@ describe('Phase 2 Integration: WAI Conversation Engine & Commercial Assistant MV
     );
 
     // 1. Verificações do resultado retornado para a UI
-    expect(result.detectedIntent).toBe('BOOK_APPOINTMENT');
+    expect(result.detectedIntent).toBe('CREATE_APPOINTMENT');
     expect(result.replyText).to.be.a('string'); // handled by LLM response
-    expect(result.toolCalls.length).toBeGreaterThanOrEqual(1); // checkAvailability
+    expect(result.toolCalls.map((call) => call.toolName)).toEqual(['checkAvailability', 'createAppointment']);
+    expect(result.replyText).toContain('Prenotazione confermata');
 
     // 2. Verificações de persistência de Mensagens RLS
     expect(messagesStore.length).toBe(2); // Mensagem do cliente + resposta do assistente
@@ -309,5 +338,58 @@ describe('Phase 2 Integration: WAI Conversation Engine & Commercial Assistant MV
 
     expect(messagesStore.length).toBe(0); // Nenhuma mensagem persistida
     expect(appointmentsStore.length).toBe(0); // Nenhuma alteração no banco
+  });
+
+  it('rejeita uma conversa que não pertence à organização antes de persistir mensagens', async () => {
+    conversationsStore.push({
+      id: 'conv-foreign', organization_id: 'org-foreign', customer_id: null,
+      channel: 'webchat', status: 'active', created_at: new Date().toISOString(),
+    });
+
+    await expect(processConversationTurn(
+      mockUserClient,
+      mockAdminClient,
+      'user-admin-aurora',
+      'studio-aurora',
+      new WebChatAdapter(),
+      { conversationId: 'conv-foreign', text: 'Ciao' },
+      'corr-cross-conversation',
+    )).rejects.toThrow(/Conversazione non trovata o non accessibile/);
+
+    expect(messagesStore).toHaveLength(0);
+    expect(executeToolByName).not.toHaveBeenCalled();
+  });
+
+  it('non sceglie il primo cliente del tenant per cancellare senza recapito verificato', async () => {
+    const result = await processConversationTurn(
+      mockUserClient,
+      mockAdminClient,
+      'user-admin-aurora',
+      'studio-aurora',
+      new WebChatAdapter(),
+      { conversationId: 'conv-001', text: 'Vorrei cancellare il mio appuntamento.' },
+      'corr-identity-required',
+    );
+
+    expect(result.detectedIntent).toBe('CANCEL_APPOINTMENT');
+    expect(result.toolCalls[0]?.result).toMatchObject({ success: false, code: 'CUSTOMER_IDENTITY_REQUIRED' });
+    expect(result.replyText).toContain('recapito verificato del titolare');
+    expect(executeToolByName).not.toHaveBeenCalled();
+  });
+
+  it('avvia una nuova conversazione quando il canale non fornisce un identificatore', async () => {
+    const result = await processConversationTurn(
+      mockUserClient,
+      mockAdminClient,
+      'user-admin-aurora',
+      'studio-aurora',
+      new WebChatAdapter(),
+      { text: 'Buongiorno' },
+      'corr-new-conversation',
+    );
+
+    expect(result.conversationId).toBe('conv-002');
+    expect(conversationsStore).toHaveLength(2);
+    expect(messagesStore).toHaveLength(2);
   });
 });

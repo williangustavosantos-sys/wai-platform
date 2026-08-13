@@ -540,9 +540,9 @@ export async function updateAppointmentStatus(
   }
 
   const updatePayload: Record<string, unknown> = { status: newStatus };
-  if (newStatus === 'cancelled' && cancellationReason) {
-    updatePayload.cancellation_reason = cancellationReason;
-  }
+  const auditAfterData = newStatus === 'cancelled' && cancellationReason
+    ? { ...updatePayload, cancellation_reason: cancellationReason }
+    : updatePayload;
 
   const { error } = await client
     .from('appointments')
@@ -555,7 +555,7 @@ export async function updateAppointmentStatus(
   await recordAuditLog({
     organizationId: access.organizationId, actorUserId: userId, actorType: 'user',
     action: `UPDATE_APPOINTMENT_STATUS_${newStatus.toUpperCase()}`, entityType: 'appointment', entityId: appointmentId,
-    beforeData: { status: existing.status }, afterData: updatePayload, correlationId,
+    beforeData: { status: existing.status }, afterData: auditAfterData, correlationId,
   }, adminClient, log);
 
   return { success: true, code: `APPOINTMENT_${newStatus.toUpperCase()}`, appointmentId };

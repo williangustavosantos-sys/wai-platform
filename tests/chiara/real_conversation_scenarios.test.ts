@@ -972,6 +972,15 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
 
       // For multi-turn scenarios, we simulate a conversation session by maintaining the conversation Id
       let conversationId = `conv-scen-${scenario.id}`;
+      conversationsStore.push({
+        id: conversationId,
+        organization_id: '11111111-1111-1111-1111-111111111111',
+        customer_id: null,
+        channel: 'webchat',
+        status: 'active',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
 
       for (let i = 0; i < scenario.turns.length; i++) {
         const turn = scenario.turns[i];

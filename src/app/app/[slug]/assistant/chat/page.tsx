@@ -56,6 +56,22 @@ export default async function ChatSimulatorPage({ params }: Props) {
     crypto.randomUUID(),
   );
 
+  if (access.role === 'organization_viewer') {
+    return (
+      <main className="wai-chat-page">
+        <div className="wai-card" style={{ maxWidth: '720px', margin: '3rem auto', textAlign: 'center' }}>
+          <h1 className="wai-title">Digital Employee</h1>
+          <p className="wai-subtitle" style={{ marginTop: '0.75rem' }}>
+            Il ruolo visualizzatore è in sola lettura. Il simulatore operativo è disponibile per proprietari e operatori.
+          </p>
+          <Link href={`/app/${slug}`} className="wai-button" style={{ display: 'inline-block', marginTop: '1.5rem' }}>
+            Torna al pannello
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="wai-chat-page">
       <div className="wai-chat-breadcrumb">

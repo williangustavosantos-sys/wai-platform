@@ -523,7 +523,7 @@ async function executeGetCompanyInformation(client: any, userId: string, organiz
     ? org.name.trim()
     : typeof settings.displayName === 'string' && settings.displayName.trim()
       ? settings.displayName.trim()
-      : 'WAI';
+      : 'Organizzazione';
   const services = await listServices(client, userId, organizationSlug);
   const professionals = await listProfessionals(client, userId, organizationSlug);
   const rulesResult = await client.from('business_rules').select('*').eq('organization_id', org.id).maybeSingle();
@@ -577,7 +577,7 @@ async function executeOwnerMoveAppointment(client: any, adminClient: any, userId
 
   const appts = await listAppointments(client, userId, organizationSlug);
   const upcoming = appts
-    .filter(a => a.customerId === match.id && ['confirmed', 'held', 'pending'].includes(a.status))
+    .filter(a => a.customerId === match.id && ['confirmed', 'held'].includes(a.status))
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
 
   if (upcoming.length === 0) {

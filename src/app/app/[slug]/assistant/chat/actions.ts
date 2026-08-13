@@ -24,6 +24,9 @@ export async function sendChatMessageAction(
   if (!access) {
     return { error: 'Accesso negato a questa organizzazione.' };
   }
+  if (access.role !== 'organization_owner' && access.role !== 'organization_operator') {
+    return { error: 'Il ruolo visualizzatore può consultare i dati, ma non inviare messaggi operativi.' };
+  }
 
   const adminClient = createAdminClient();
   const adapter = new WebChatAdapter();
@@ -55,6 +58,14 @@ export async function loadConversationStateAction(organizationSlug: string, forc
 
   if (!session) {
     return { error: 'Non autenticato.' };
+  }
+
+  const access = await verifyOrganizationAccess(supabase, session.userId, organizationSlug);
+  if (!access) {
+    return { error: 'Accesso negato a questa organizzazione.' };
+  }
+  if (access.role !== 'organization_owner' && access.role !== 'organization_operator') {
+    return { error: 'Il simulatore operativo è disponibile solo per proprietari e operatori.' };
   }
 
   const adminClient = createAdminClient();
