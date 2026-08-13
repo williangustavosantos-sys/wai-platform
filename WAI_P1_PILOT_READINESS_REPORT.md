@@ -1,84 +1,47 @@
-# WAI P1 — Relatório de prontidão do piloto
+# WAI P1 — Prontidão para o piloto
 
-Data: 11 de agosto de 2026
+Data: 13 de agosto de 2026
+
 Branch: `codex-p1-pilot-preparation`
-Base P0 preservada: 30/30 local e 11/11 Supabase QA real
 
-## Escopo entregue
+Commit técnico: `9807acf51e54c56750fc17e39644a1f1e604ba1f`
 
-- Navegação principal: Digital Employee e Calendar; Settings permanece secundário.
-- `organizations.name` é o nome empresarial canônico. `settings_json.displayName` é apenas fallback legado de leitura e não é regravado.
-- A identidade do Digital Employee permanece em `digital_employees.name`, separada da empresa.
-- O papel administrativo da conversa vem de sessão autenticada, organização verificada e `organization_members.role`; nenhum telefone, ID ou fixture QA concede privilégio.
-- `organizations.timezone` determina intervalo mensal, renderização, conversão de reagendamento, bloqueios e datas relativas.
-- Serviços e profissionais podem ser editados e alternados entre ativo/inativo pelo serviço existente, com auditoria.
-- O Calendar usa dados reais, intervalo mensal no servidor, detalhes, cancelamento, reagendamento e bloqueio via Server Actions finas que delegam para os serviços existentes.
+## Resultado atual
 
-Não houve migration, framework novo, cliente Supabase paralelo nem lógica operacional duplicada no frontend.
+`READY FOR HUMAN ACCEPTANCE TEST — P1 FINAL ACCEPTANCE PENDING`
 
-## Evidência automatizada
+- P0 local: **30/30 PASS**
+- P0 Supabase QA real: **11/11 PASS**
+- Unit + integration + P1 local: **61 PASS, 10 SKIP, 0 FAIL**
+- P1 Supabase QA real: **10/10 PASS**
+- Harness Chiara legado: **100/100 PASS**
+- Regressão local completa: **291 PASS, 22 SKIP, 0 FAIL**
+- TypeScript: **PASS**
+- Build: **PASS**
 
-| Verificação | Resultado |
-| --- | --- |
-| P0 local — cenários realistas offline | 30/30 PASS |
-| P0 Supabase QA real | 11/11 PASS |
-| P1 visível/unitário | 12/12 PASS |
-| P1 Supabase QA real isolado | 10/10 PASS |
-| TypeScript | PASS |
-| Build Next.js | PASS |
-| `git diff --check` | PASS |
+Os 22 skips do comando completo são gates separados: 11 P0 reais, 10 P1 reais e 1 validação externa Gemini. Os gates Supabase foram executados separadamente e passaram integralmente.
 
-### P1 Supabase QA real — 10/10
+## Correções consolidadas
 
-1. Nome empresarial canônico persistido e fallback legado preservado.
-2. Identidade separada do Digital Employee persistida.
-3. Serviço criado, desativado, reativado e relido.
-4. Profissional criado, desativado, reativado e relido.
-5. Booking por `processConversationTurn()` relido no banco e visível no modelo mensal.
-6. Consulta de agenda por proprietário autenticado, sem reconhecimento por telefone ou fixture.
-7. Reagendamento persistido e refletido no mês.
-8. Cancelamento persistido e refletido como cancelado.
-9. Bloqueio empresarial persistido e aplicado à disponibilidade real.
-10. Leitura e mutation entre organizações bloqueadas pela fronteira de aplicação/RLS.
+- Italiano, inglês e português com detecção por mensagem e troca de idioma entre turnos.
+- Booking natural inicia coleta de serviço/data/hora/cliente e confirma somente depois de `APPOINTMENT_CREATED` com ID persistido.
+- Continuidade de workflow entre mensagens.
+- Mensagens validadas contra a organização da conversa.
+- Nova sessão quando o canal não fornece `conversationId`.
+- Cancelamento/reagendamento exigem contato verificado e nunca usam o primeiro cliente do tenant como fallback.
+- Cancelamento compatível com o schema P1 real; motivo preservado no Audit Log.
+- Identidades de produto, empresa e Digital Employee separadas e sem nomes de fixture no runtime.
+- Viewer impedido de executar ações operacionais com feedback claro.
 
-Cada execução P1 usa organização, usuário e dados exclusivos por prefixo. A limpeza posterior confirmou zero organizações temporárias e zero auditorias estáticas remanescentes.
+## Escopo preservado
 
-## Autorização e isolamento
+- Nenhuma migration alterada.
+- Nenhum projeto de produção alterado.
+- Nenhum merge em `main`.
+- Nenhuma feature P2 ou nova arquitetura adicionada.
 
-- Operações normais usam cliente autenticado e RLS.
-- O service role permaneceu limitado a setup/cleanup QA e registro de auditoria server-only já existente.
-- A validação RLS de menor privilégio do P0 permaneceu verde no QA real.
-- A consulta de agenda administrativa é liberada somente ao contexto server-only do workspace autenticado com papel `organization_owner` ou `organization_operator`.
+## Pendência
 
-## Estados do piloto
+O checklist humano A–J ainda deve ser executado pelo fundador. O roteiro completo, as evidências e os riscos estão em `WAI_FINAL_PILOT_READINESS_REPORT.md`.
 
-- Loading da área autenticada e erro recuperável da rota.
-- Estados vazios para agenda e catálogos sem registros.
-- Validação de nome, email, duração, preço, datas e transições de estado no backend.
-- Conflitos reais GIST retornam `SLOT_OCCUPIED`.
-- Viewer pode ler; owner/operator podem executar as mutations permitidas pelos serviços.
-
-## Dívida legada não bloqueante
-
-- `SimpleAIProvider` permanece somente como caminho legado coberto por testes unitários; o caminho operacional do piloto usa `LocalIntentRouter` e `processConversationTurn()`.
-- Gemini continua opcional e não é requisito para os fluxos determinísticos do P1.
-- As rotas CRM e Rules permanecem disponíveis por compatibilidade, mas fora da navegação principal do piloto.
-
-## Checklist humano A–J
-
-- A. Login do proprietário e organização correta — PENDENTE
-- B. Edição empresarial, reload e persistência — PENDENTE
-- C. Criação/edição de serviço disponível ao Core — PENDENTE
-- D. Configuração de profissional refletida na agenda — PENDENTE
-- E. Nome configurado do Digital Employee e conversa real — PENDENTE
-- F. Booking conversacional aparece no Calendar — PENDENTE
-- G. Reagendamento aparece no novo horário — PENDENTE
-- H. Cancelamento atualiza o Calendar — PENDENTE
-- I. Pergunta de agenda do proprietário usa dados reais — PENDENTE
-- J. Organização A não visualiza dados da organização B — PENDENTE
-
-## Status P1
-
-`READY FOR HUMAN ACCEPTANCE TEST`
-
-O status máximo permanece este até a execução humana do checklist A–J. Não declarar `READY FOR CONTROLLED PILOT` nesta etapa.
+Não declarar aceitação final do P1 antes dessa validação humana.

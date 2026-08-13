@@ -1,27 +1,56 @@
-# CHIARA VALIDATION REPORT
+# CHIARA TEST REPORT
 
-**Versione:** v0.1.1  
-**Data Esecuzione:** 2026-08-10  
-**Ambiente:** Homologation (Studio Aurora - Fictitious Mode)  
+## CURRENT P1 VALIDATION
 
----
+Commit: 9807acf51e54c56750fc17e39644a1f1e604ba1f
+Branch: codex-p1-pilot-preparation
+Date: 2026-08-13
+Legacy Chiara harness: 100/100 PASS
+Full regression: 291 PASS, 22 SKIPPED, 0 FAIL
+Status: AUTOMATED REGRESSION PASS — HUMAN ACCEPTANCE PENDING
 
-### Risultati per Categoria
+## HISTORICAL BASELINE
 
-- **1. Novo Agendamento:** 0/0 PASS
-- **2. Cliente Existente:** 0/1 FAIL
-- **3. Segurança de Identidade (Zero Trust):** 0/0 PASS
-- **4. Agenda e Buffers (Anti-Overlap):** 0/0 PASS
-- **5. Informações do Studio Aurora:** 0/0 PASS
-- **6. Erros de Linguagem e Edge Cases:** 0/0 PASS
+Commit: 93d4c3d
+Tag: v0.1.1
+Branch: jules-2981534924016550386-0433b134
+Date: 2026-08-08
 
----
 
-### STATUS FINAL DA HOMOLOGAÇÃO
+## TEST SUMMARY
+**Total scenarios:** 100
 
-## **NOT READY**
+### CORE_MVP
+- Total: 88
+- Passed: 88
+- Failed: 0
+- Blocked by environment: 0
 
-❌ **Erros encontrados durante a validação:**
+### FUTURE_FEATURE
+- Total: 7
+- Currently supported: 7
+- Not implemented: 0
+- Blocked: 0
 
-#### Categoria cliente_existente:
-- Test ID 034: expected false to be true // Object.is equality
+### NOT_CONFIGURED
+- Total: 5
+- Safe responses: 0
+- Hallucinated responses: 0
+- Blocked: 0
+
+## CATEGORY RESULTS (CORE MVP PASS RATES)
+- Booking (Category A): 100.0% (15/15) [0 blocked]
+- Customer recognition (Category B): 100.0% (18/18) [0 blocked]
+- Identity security (Category C): 100.0% (14/14) [0 blocked]
+- Calendar (Category D): 100.0% (16/16) [0 blocked]
+- FAQ (Category E): 100.0% (10/10) [0 blocked]
+- Natural language (Category F): 100.0% (10/10) [0 blocked]
+- Adversarial/ambiguous input (Category G): 100.0% (5/5) [0 blocked]
+
+## FAILURE DETAILS
+
+## CRITICAL BLOCKERS (Grouped by Root Cause)
+None.
+
+## FINAL GO / NO-GO
+**AUTOMATED REGRESSION PASS — HUMAN ACCEPTANCE PENDING**
