@@ -104,6 +104,17 @@ const WEEKDAYS: Record<string, number> = {
   sabato: 6, saturday: 6, sabado: 6,
 };
 
+// Short weekday forms used by day cards (e.g. "Lun 17").
+const SHORT_WEEKDAYS: Record<string, number> = {
+  dom: 0, sun: 0,
+  lun: 1, mon: 1,
+  mar: 2, tue: 2, ter: 2,
+  mer: 3, wed: 3, qua: 3,
+  gio: 4, thu: 4, qui: 4,
+  ven: 5, fri: 5, sex: 5,
+  sab: 6, sat: 6,
+};
+
 const STOP_WORDS = new Set([
   'dott', 'dottor', 'dottoressa', 'dottssa', 'dr', 'del', 'della', 'di', 'per',
   'iniziale', 'annuale', 'studio', 'servizio', 'servizi', 'con', 'una', 'un', 'the',
@@ -162,10 +173,24 @@ function extractDate(text: string, timezone: string): Pick<RoutedEntities, 'date
   }
 
   const monthNames = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join('|');
-  const namedMatch = text.match(new RegExp(`\\b(\\d{1,2})\\s*(?:di\\s+)?(${monthNames})(?:\\s+(20\\d{2}))?\\b`));
+  // Day-first with optional connector: "25 agosto", "25 di agosto", "25 de agosto", "25 of August".
+  const dayFirstMatch = text.match(new RegExp(`\\b(\\d{1,2})\\s*(?:(?:di|de|of)\\s+)?(${monthNames})(?:\\s+(20\\d{2}))?\\b`));
+  // Month-first (English): "August 25", "August 25, 2026". Tokens that also
+  // name a short weekday (e.g. "mar" = martedì) are excluded so "mar 25"
+  // keeps resolving to the weekday (Tuesday 25), never to a month.
+  const monthFirstNames = Object.keys(MONTHS)
+    .filter((name) => !(name in SHORT_WEEKDAYS))
+    .sort((a, b) => b.length - a.length)
+    .join('|');
+  const monthFirstMatch = text.match(new RegExp(`\\b(${monthFirstNames})\\s+(\\d{1,2})(?:\\s*[,]?\\s*(20\\d{2}))?\\b`));
+  const namedMatch = dayFirstMatch || monthFirstMatch;
   if (namedMatch) {
     const raw = namedMatch[0];
-    const date = formatDate(Number(namedMatch[3] || year), MONTHS[namedMatch[2]], Number(namedMatch[1]));
+    const isDayFirst = Boolean(dayFirstMatch);
+    const day = Number(isDayFirst ? namedMatch[1] : namedMatch[2]);
+    const monthToken = isDayFirst ? namedMatch[2] : namedMatch[1];
+    const dateYear = Number((isDayFirst ? namedMatch[3] : namedMatch[3]) || year);
+    const date = formatDate(dateYear, MONTHS[monthToken], day);
     return date ? { date } : { invalidDate: raw };
   }
 
@@ -179,6 +204,22 @@ function extractDate(text: string, timezone: string): Pick<RoutedEntities, 'date
       const target = new Date(today);
       target.setUTCDate(target.getUTCDate() + offset);
       return { date: target.toISOString().slice(0, 10) };
+    }
+  }
+
+  const shortWeekdayMatch = text.match(/\b(dom|lun|mar|mer|gio|ven|sab|sun|mon|tue|wed|thu|fri|sat|ter|qua|qui|sex)\b[.,]?\s+(\d{1,2})\b/)
+    || text.match(/\b(\d{1,2})\s+(?:di\s+)?(dom|lun|mar|mer|gio|ven|sab|sun|mon|tue|wed|thu|fri|sat|ter|qua|qui|sex)\b/);
+  if (shortWeekdayMatch) {
+    const targetDay = SHORT_WEEKDAYS[shortWeekdayMatch[1].toLowerCase()] ?? SHORT_WEEKDAYS[shortWeekdayMatch[2].toLowerCase()];
+    const dayOfMonth = Number(/^\d+$/.test(shortWeekdayMatch[1]) ? shortWeekdayMatch[1] : shortWeekdayMatch[2]);
+    if (targetDay !== undefined && dayOfMonth >= 1 && dayOfMonth <= 31) {
+      for (let offset = 0; offset <= 30; offset += 1) {
+        const target = new Date(today);
+        target.setUTCDate(target.getUTCDate() + offset);
+        if (target.getUTCDay() === targetDay && target.getUTCDate() === dayOfMonth) {
+          return { date: target.toISOString().slice(0, 10) };
+        }
+      }
     }
   }
 
@@ -220,22 +261,79 @@ function extractTime(text: string): Pick<RoutedEntities, 'time' | 'timePeriod'> 
   return { time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` };
 }
 
-function extractSelfIdentifiedName(userText: string): Pick<RoutedEntities, 'requestedCustomerName' | 'requestedCustomerFirstName' | 'requestedCustomerLastName'> {
+function extractSelfIdentifiedName(userText: string, ctx?: { firstName?: string; catalogNames?: Set<string> }): Pick<RoutedEntities, 'requestedCustomerName' | 'requestedCustomerFirstName' | 'requestedCustomerLastName'> {
+  // Structured form: "Nome Mario, cognome Rossi" / "Nome Mario cognome Rossi"
+  // (order-agnostic: also "Cognome Rossi, nome Mario"). The form is the one
+  // emitted by the IDENTITY structured form, and the free-text equivalent.
+  const structuredFirstName = userText.match(
+    /\b(?:nome|first\s*name)\s+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+)[,\s]+(?:il\s+|o\s+)?(?:cognome|last\s*name|sobrenome|apelido)\s+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+)\b/i,
+  );
+  const structuredLastNameFirst = userText.match(
+    /\b(?:cognome|last\s*name|sobrenome|apelido)\s+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+)[,\s]+(?:il\s+|o\s+)?(?:nome|first\s*name)\s+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+)\b/i,
+  );
+  if (structuredFirstName || structuredLastNameFirst) {
+    const first = structuredFirstName ? structuredFirstName[1] : structuredLastNameFirst![2];
+    const last = structuredFirstName ? structuredFirstName[2] : structuredLastNameFirst![1];
+    return {
+      requestedCustomerName: `${first} ${last}`,
+      requestedCustomerFirstName: first,
+      requestedCustomerLastName: last,
+    };
+  }
+
+  // Primary: detect names introduced by phrases like "mi chiamo", "sono", "my name is"
   const match = userText.match(/\b(?:mi\s+chiamo|sono|my\s+name\s+is|i\s+am|i['’]m|meu\s+nome\s+[ée]|me\s+chamo|chamo-me|sou)\s+([A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ'’-]+){0,4})/i);
-  if (!match) return {};
+  if (match) {
+    const name = match[1]
+      .split(/\s+(?:e\s+(?:il\s+)?mio|and\s+my|e\s+o\s+meu|minha|my|meu)?\s*(?:telefono|cellulare|phone|mobile|telefone|telem[oó]vel|tel)\b/i)[0]
+      .trim()
+      .replace(/[.,;:!?]+$/, '');
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return {};
+    return {
+      requestedCustomerName: name,
+      requestedCustomerFirstName: parts[0],
+      ...(parts.length >= 2 ? { requestedCustomerLastName: parts.slice(1).join(' ') } : {}),
+    };
+  }
 
-  const name = match[1]
-    .split(/\s+(?:e\s+(?:il\s+)?mio|and\s+my|e\s+o\s+meu|minha|my|meu)?\s*(?:telefono|cellulare|phone|mobile|telefone|telem[oó]vel|tel)\b/i)[0]
-    .trim()
-    .replace(/[.,;:!?]+$/, '');
-  const parts = name.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return {};
+  // Fallback: detect standalone full names (2-3 words, Italian/Portuguese pattern)
+  // e.g. "Mario Rossi", "Giulia De Rossi", "Luca Bianchi"
+  // Only matches when no explicit intro phrase is present and the text is a clean name
+  const words = userText.trim().replace(/[.,;:!?]+$/, '').split(/\s+/).filter(Boolean);
+  if (words.length === 2 || words.length === 3) {
+    // All words must look like names (capitalized, not common stopwords)
+    const namePattern = /^[A-Z][a-zàéèìòùúÀÉÈÌÒÙÚ]+[a-zàéèìòùúÀÉÈÌÒÙÚ'-]*$/;
+    const italianStopwords = new Set(['e', 'di', 'da', 'del', 'della', 'per', 'con', 'ho', 'sono', 'il', 'la', 'i', 'gli', 'le', 'mi', 'ti', 'si']);
+    if (words.every(w => italianStopwords.has(w.toLowerCase()) || namePattern.test(w))) {
+      const filtered = words.filter(w => !italianStopwords.has(w.toLowerCase()));
+      if (filtered.length >= 2) {
+        const name = filtered.join(' ');
+        const normalizedName = normalizeNaturalLanguage(name);
+        // A "clean name" that matches a catalog label (service / professional)
+        // is almost certainly a card option sent as text — never identity.
+        // Example: the service label "Consulenza Fiscale Iniziale" must not be
+        // parsed as the customer's name.
+        if (ctx?.catalogNames?.has(normalizedName)) {
+          return {};
+        }
+        // A bare-name phrase that EMBEDS a catalog label is a booking sentence,
+        // not an identity: "Quero consulta inicial" / "Vorrei consulenza
+        // fiscale" must never produce a phantom customer name like "Quero
+        // Consulta Inicial".
+        if (ctx?.catalogNames && [...ctx.catalogNames].some((catalog) => catalog && normalizedName.includes(catalog))) {
+          return {};
+        }
+        return {
+          requestedCustomerName: name,
+          requestedCustomerFirstName: filtered[0],
+          requestedCustomerLastName: filtered.slice(1).join(' '),
+        };
+      }
+    }
+  }
 
-  return {
-    requestedCustomerName: name,
-    requestedCustomerFirstName: parts[0],
-    ...(parts.length >= 2 ? { requestedCustomerLastName: parts.slice(1).join(' ') } : {}),
-  };
+  return {};
 }
 
 export function extractCustomerPhone(userText: string): string | undefined {
@@ -260,6 +358,17 @@ const CONCEPT_ALIASES: Array<[RegExp, string]> = [
 
 const CONCEPT_NAMES = new Set(CONCEPT_ALIASES.map(([, concept]) => concept));
 
+// Domain concepts (tax, accounting) are strong signals that uniquely identify
+// a catalog service (e.g. "tasse" -> the fiscal consultation). The generic
+// "consultation" concept is a booking signal word (like "visita") and must
+// NEVER auto-resolve a service by itself — a missing explicit service always
+// sends the flow to the SERVICE step ("informação faltante → perguntar").
+const CONCEPT_WEIGHTS: Record<string, number> = {
+  consultation: 2,
+  tax: 4,
+  accounting: 4,
+};
+
 function conceptTokens(value: string): string[] {
   return normalizeNaturalLanguage(value).split(' ').map((rawToken) => {
     const token = rawToken.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '');
@@ -273,13 +382,13 @@ function catalogMatchScore(text: string, entryName: string): number {
   if (normalizedName && text.includes(normalizedName)) return 20;
 
   const inputConcepts = new Set(conceptTokens(text));
-  return conceptTokens(entryName).reduce((score, token) => score + (inputConcepts.has(token) ? 2 : 0), 0);
+  return conceptTokens(entryName).reduce((score, token) => score + (inputConcepts.has(token) ? (CONCEPT_WEIGHTS[token] ?? 2) : 0), 0);
 }
 
 function matchCatalogEntity<T extends { id: string; name: string }>(text: string, entries: T[]): T | undefined {
   const ranked = entries
     .map((entry) => ({ entry, score: catalogMatchScore(text, entry.name) }))
-    .filter((candidate) => candidate.score > 0)
+    .filter((candidate) => candidate.score >= 4)
     .sort((a, b) => b.score - a.score);
   if (!ranked.length || (ranked[1] && ranked[0].score === ranked[1].score)) return undefined;
   return ranked[0].entry;
@@ -321,8 +430,31 @@ export class LocalIntentRouter {
     const dateEntity = extractDate(text, timezone);
     const timeEntity = extractTime(text);
     const catalogServices = context?.services || [];
-    const matchedServices = catalogServices.filter((entry) => catalogMatchScore(text, entry.name) > 0);
-    const service = matchCatalogEntity(text, catalogServices);
+    // Catalog labels used to guard the identity fallback: a standalone
+    // capitalized phrase that equals a service/professional label is a card
+    // option, not a customer name.
+    const catalogNames = new Set(
+      [...catalogServices, ...(context?.professionals || [])].map((entry) => normalizeNaturalLanguage(entry.name)),
+    );
+    // A service only "matches" when the score is a real signal (>= 4), the
+    // same threshold used by matchCatalogEntity. Using score > 0 here makes
+    // catalogues with similar names ("Consulta Inicial" / "Consulta Retorno" /
+    // "Consulta Online") flag an explicit, exact-name choice as ambiguous: the
+    // weak concept overlap (score 2) drowns the exact match (score 20) and the
+    // customer's chosen service is silently dropped.
+    const matchedServices = catalogServices.filter((entry) => catalogMatchScore(text, entry.name) >= 4);
+    // An explicit exact-name match (full normalized label present in the text,
+    // score 20) is authoritative: a weak concept overlap from a similarly-named
+    // catalog entry (e.g. the misspelled "cunsulenza fiscale ritorno" scoring 4
+    // on the shared "fiscale" concept) must never turn the customer's explicit
+    // choice into a false ambiguity. Without an exact match, a single
+    // concept-level candidate may still resolve ("Vorrei una consulenza" with a
+    // one-service catalog), but several concept-level candidates mean the
+    // customer named multiple services — the flow must ask which one.
+    const exactServiceMatches = catalogServices.filter((entry) => catalogMatchScore(text, entry.name) >= 20);
+    const exactService = exactServiceMatches.length === 1 ? exactServiceMatches[0] : undefined;
+    const service = exactService || (matchedServices.length === 1 ? matchCatalogEntity(text, catalogServices) : undefined);
+    const serviceAmbiguous = matchedServices.length > 1 && !exactService;
     const professional = matchCatalogEntity(text, context?.professionals || []);
     const professionalName = professional ? normalizeNaturalLanguage(professional.name) : '';
     const professionalPersonName = professionalName.replace(/^(?:dott\w*|dr)\.?\s+/, '');
@@ -346,7 +478,7 @@ export class LocalIntentRouter {
     const verifiedCustomerName = verifiedCustomer
       ? `${verifiedCustomer.firstName || ''} ${verifiedCustomer.lastName || ''}`.trim()
       : '';
-    const selfIdentifiedName = extractSelfIdentifiedName(userText);
+    const selfIdentifiedName = extractSelfIdentifiedName(userText, { catalogNames });
     const verifiedName = normalizeNaturalLanguage(verifiedCustomerName);
     const claimedName = normalizeNaturalLanguage(selfIdentifiedName.requestedCustomerName || '');
     const completeClaimConflicts = Boolean(
@@ -375,7 +507,7 @@ export class LocalIntentRouter {
         },
       } : {}),
       ...(namedCustomers.length > 1 ? { multipleCustomerNames: true } : {}),
-      ...(matchedServices.length > 1 ? { multipleServices: true } : {}),
+      ...(serviceAmbiguous ? { multipleServices: true } : {}),
       ...(containsAny(text, [
         /\b(per conto di|a nome (?:di|mio)|mio fratello|mia sorella|mia moglie|mio marito|moglie di|marito di|un parente)\b/,
       ]) ? { thirdPartyRequest: true } : {}),
@@ -473,13 +605,18 @@ export class LocalIntentRouter {
       }
     }
 
-    if (/\b(operatore|umano|segretaria|human agent|atendente|truffator\w*|reclamo)\b/.test(text)) {
+    if (/\b(operatore|umano|humano|human|segretaria|secretary|human agent|atendente|operador|operator|pessoa|person|truffator\w*|reclamo)\b/.test(text)) {
       return { intent: 'HUMAN_HANDOFF', entities, confidence: 0.94, needsClarification: false };
     }
 
     let faqTopic = detectFaqTopic(text);
-    const cancelSignal = /\b(disdire|cancellare|annullare|annulla|cancel)\b/.test(text);
-    const rescheduleSignal = /\b(spostare|rimandare|riprogrammare|reschedule|remarcar)\b/.test(text);
+    // Cancel / reschedule signals cover the three supported languages:
+    // Italian (disdire/cancellare/annullare, spostare/rimandare/riprogrammare),
+    // Portuguese (cancelar/desmarcar, remarcar/reagendar/reprogramar, "mudar" +
+    // appointment word) and English (cancel, reschedule).
+    const cancelSignal = /\b(disdire|cancellare|annullare|annulla|cancel|cancelar|cancelo|desmarcar)\b/.test(text);
+    const rescheduleSignal = /\b(spostare|rimandare|riprogrammare|reschedule|remarcar|reagendar|reprogramar)\b/.test(text)
+      || /\bmudar\w*\b.*\b(?:horario|horário|orario|data|appuntamento|prenotazione|consulta|appointment)\b/.test(text);
     const workflowIntent = context?.workflow?.intent;
     const hypothetical = /\b(posso|potrei|se |quanto tempo|come funziona|come posso)\b/.test(text);
     const explicitBookingAction = /\b(ho bisogno|mi serve|devo|vorrei parlare|quero marcar|gostaria de marcar|need an appointment|would like to book|i want to book)\b/.test(text);
@@ -539,7 +676,10 @@ export class LocalIntentRouter {
     const bookingSignal = preliminaryBookingSignal;
     const domainSignal = Boolean(service) || /\b(consulenza|consultation|consultoria|consulta|fiscal\w*|tax|taxes|tasse|impost\w*|bilancio|accounting|accountant|contabil\w*|commercialista|partita iva)\b/.test(text);
 
-    const continuingBooking = workflowIntent === 'CHECK_AVAILABILITY' || bookingSignal || availabilitySignal;
+    // domainSignal (e.g. "consulenza", "fiscale") is also a booking-family
+    // signal: with a single-service catalog it must resolve that service, and
+    // the availability/professional auto-resolve must not miss domain-only turns.
+    const continuingBooking = workflowIntent === 'CHECK_AVAILABILITY' || bookingSignal || availabilitySignal || domainSignal;
     if (continuingBooking && !entities.service && catalogServices.length === 1) {
       entities.service = { id: catalogServices[0].id, name: catalogServices[0].name };
     }
@@ -547,7 +687,7 @@ export class LocalIntentRouter {
       const onlyProfessional = context!.professionals[0];
       entities.professional = { id: onlyProfessional.id, name: onlyProfessional.name };
     }
-    if (continuingBooking && /\b(primo disponibile|qualsiasi|anyone|any professional|first available|qualquer profissional|primeiro disponivel)\b/.test(text)) {
+    if (continuingBooking && /\b(primo disponibile|qualsiasi|nessuna preferenza|senza preferenza|non ho preferenze|anyone|any professional|first available|qualquer profissional|primeiro disponivel|no preference|sem preferencia)\b/.test(text)) {
       entities.professional = { id: 'ANY', name: 'First available' };
     }
 
