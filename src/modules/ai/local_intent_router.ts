@@ -377,9 +377,102 @@ function conceptTokens(value: string): string[] {
   }).filter((token) => (token.length >= 4 || CONCEPT_NAMES.has(token)) && !STOP_WORDS.has(token));
 }
 
-function catalogMatchScore(text: string, entryName: string): number {
+export function editDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = 0; i <= m; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= n; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+  }
+  return dp[m][n];
+}
+
+/**
+ * Tolerância segura a erros de digitação no catálogo.
+ *
+ * Regras de segurança:
+ * - Match EXATO do nome normalizado completo continua sendo autoritativo (score 20).
+ * - Um único token genérico citado exato ("consulenza", "revisione") NUNCA
+ *   resolve sozinho — isso mantém a ambiguidade do conceito (SERVICE step).
+ * - Um único token com typo claro (distância de edição <= 2 em palavra >= 6
+ *   letras) é um sinal forte: alguém tentou escrever aquele nome.
+ * - Vários tokens casados (exatos ou com typo) são um sinal forte de serviço.
+ * - Quando dois catálogos empatam no topo, NENHUM resolve (ambiguidade preservada).
+ */
+export function fuzzyCatalogScore(text: string, entryName: string): number {
+  const textTokens = normalizeNaturalLanguage(text).split(' ').filter((token) => token.length >= 3);
+  // A pontuação de borda ("consulenza.", "fiscale,") é removida antes de
+  // comparar: sem isso, "consulenza." viraria um "typo" de "consulenza"
+  // (distância 1) e um termo genérico resolveria o serviço indevidamente.
+  const cleanTextTokens = textTokens.map((token) => token.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ''));
+  // Tokens de texto que são conceitos conhecidos ("consulenza", "fiscale",
+  // "revisione"...) NUNCA disparam typo-match: são termos genéricos e um typo
+  // neles (ex.: "consulenza" -> "cunsulenza") é falso positivo. Só match exato.
+  const typoCandidates = cleanTextTokens.filter((token) => !CONCEPT_ALIASES.some(([pattern]) => pattern.test(token)));
+  const nameTokens = normalizeNaturalLanguage(entryName)
+    .split(' ')
+    .filter((token) => token.length >= 3 && !STOP_WORDS.has(token));
+  if (!nameTokens.length || !cleanTextTokens.length) return 0;
+
+  let matchedExact = 0;
+  let matchedFuzzy = 0;
+  let fuzzyTokenLength = 0;
+
+  for (const nameToken of nameTokens) {
+    const exact = cleanTextTokens.some((textToken) => textToken === nameToken);
+    if (exact) {
+      matchedExact += 1;
+      continue;
+    }
+    // Distância de edição 2 só é tolerada em palavras realmente longas (>= 9
+    // letras). Em palavras médias (6-8), distância 2 casa falsos positivos
+    // (ex.: "fissare" ~ "fiscale").
+    const maxDist = nameToken.length >= 9 ? 2 : 1;
+    const fuzzy = typoCandidates.find((textToken) => textToken !== nameToken && editDistance(textToken, nameToken) <= maxDist);
+    if (fuzzy) {
+      matchedFuzzy += 1;
+      fuzzyTokenLength = Math.max(fuzzyTokenLength, nameToken.length);
+    }
+  }
+
+  // Todos os tokens significativos casaram (exatos ou com typo) → sinal forte.
+  if (matchedExact + matchedFuzzy === nameTokens.length && nameTokens.length >= 2) {
+    return 15;
+  }
+  // Um único token com typo claro em palavra longa (ex.: "consulenxa" → "Consulenza").
+  // O token com typo precisa ser uma palavra realmente longa (>= 6 letras): um
+  // typo em "Marco" (5 letras) nunca pode virar o profissional "Marco Rossi"
+  // quando o cliente se chama "Mario Rossi".
+  if (matchedFuzzy === 1 && matchedExact === 0 && fuzzyTokenLength >= 6) {
+    return 14;
+  }
+  // Pelo menos dois tokens com typo envolvido → sinal moderado-forte.
+  if (matchedFuzzy >= 1 && matchedExact + matchedFuzzy >= 2 && fuzzyTokenLength >= 6) {
+    return 12;
+  }
+  // Dois ou mais tokens EXATOS (nome parcial inequívoco, sem typo).
+  if (matchedExact >= 2) {
+    return 10;
+  }
+  return 0;
+}
+
+export function catalogMatchScore(text: string, entryName: string): number {
   const normalizedName = normalizeNaturalLanguage(entryName);
   if (normalizedName && text.includes(normalizedName)) return 20;
+
+  const fuzzyScore = fuzzyCatalogScore(text, entryName);
+  if (fuzzyScore > 0) return fuzzyScore;
 
   const inputConcepts = new Set(conceptTokens(text));
   return conceptTokens(entryName).reduce((score, token) => score + (inputConcepts.has(token) ? (CONCEPT_WEIGHTS[token] ?? 2) : 0), 0);
@@ -397,7 +490,24 @@ function matchCatalogEntity<T extends { id: string; name: string }>(text: string
 function detectFaqTopic(text: string): FaqTopic | undefined {
   if (containsAny(text, [/\b(indirizzo|address|endereco)\b/, /\bdove (?:si trova|siete)\b/])) return 'address';
   if (containsAny(text, [/\b(numero di telefono|telefono principale|phone number|contacto)\b/])) return 'phone';
-  if (containsAny(text, [/\b(orari di apertura|opening hours|horario de funcionamento)\b/, /\bstudio (?:e |è )?(?:aperto|chiuso)\b/, /\baperto (?:il|a|ad)\b/])) return 'hours';
+  // "orari liberi" / "orari disponibili" são pedidos de DISPONIBILIDADE
+  // (quais horários estão livres), nunca horário de funcionamento — devem ir
+  // para o fluxo de agendamento, não para a FAQ. A guarda roda antes dos padrões.
+  if (/\b(orari\s+(?:liberi|libero|disponibili|disponibile))\b/.test(text)) return undefined;
+  if (containsAny(text, [
+    // Formas explícitas (já suportadas): "orari di apertura", "opening hours",
+    // "horario de funcionamento".
+    /\b(orari di apertura|orari di lavoro|orari dello studio|opening hours|horario de funcionamento|horarios de funcionamento)\b/,
+    // Formas coloquiais italianas: "Che orari fate?", "Quali sono gli orari?",
+    // "Quali orari avete?", "Quando siete aperti?", "A che ora aprite/chiudete?".
+    /\b(che orari|quali sono gli orari|quali orari|quando siete aperti|quando siete aperto|quando aprite|quando chiudete|a che ora aprite|a che ora chiudete)\b/,
+    // Formas em inglês e português: "What are your hours?", "When are you
+    // open?", "Que horários vocês atendem?", "Quando vocês abrem?".
+    /\b(what are your (?:opening )?hours|what are the hours|when are you open|what time do you open|what time do you close)\b/,
+    /\b(que horarios voces|que horas voces|horario de atendimento|quando voces abrem|quando voces fecham|a que horas abrem|a que horas fecham)\b/,
+    /\bstudio (?:e |è )?(?:aperto|chiuso)\b/,
+    /\baperto (?:il|a|ad)\b/,
+  ])) return 'hours';
   if (containsAny(text, [/\b(quanto costa|prezzo|prezzi|price|costo|valor)\b/])) return 'price';
   if (containsAny(text, [/\b(quali servizi|servizi offrite|what services|quais servicos)\b/, /\bfate consulenz\w*\b/, /\b(durata|quanto dura|quanto tempo impiega|quanti minuti)\b/])) return 'services';
   if (containsAny(text, [/\b(chi e|chi è|si occupa|professionist\w*|commercialista|contabile)\b/])) return 'professionals';
@@ -453,8 +563,18 @@ export class LocalIntentRouter {
     // customer named multiple services — the flow must ask which one.
     const exactServiceMatches = catalogServices.filter((entry) => catalogMatchScore(text, entry.name) >= 20);
     const exactService = exactServiceMatches.length === 1 ? exactServiceMatches[0] : undefined;
-    const service = exactService || (matchedServices.length === 1 ? matchCatalogEntity(text, catalogServices) : undefined);
-    const serviceAmbiguous = matchedServices.length > 1 && !exactService;
+    // Ambiguidade só quando o topo EMPATA com o segundo candidato (ou não há
+    // vencedor claro). Um serviço com score estritamente maior (ex.: o typo
+    // "consulenxa" aproxima mais de "Consulenza Fiscale Iniziale" do que do
+    // serviço mal-nomeado "cunsulenza fiscale ritorno") RESOLVE, sem perguntar.
+    const rankedServices = catalogServices
+      .map((entry) => ({ entry, score: catalogMatchScore(text, entry.name) }))
+      .filter((candidate) => candidate.score >= 4)
+      .sort((a, b) => b.score - a.score);
+    const service = exactService
+      || (rankedServices.length === 1 ? rankedServices[0].entry : undefined)
+      || (rankedServices.length >= 2 && rankedServices[0].score > rankedServices[1].score ? rankedServices[0].entry : undefined);
+    const serviceAmbiguous = !service && rankedServices.length > 1;
     const professional = matchCatalogEntity(text, context?.professionals || []);
     const professionalName = professional ? normalizeNaturalLanguage(professional.name) : '';
     const professionalPersonName = professionalName.replace(/^(?:dott\w*|dr)\.?\s+/, '');
