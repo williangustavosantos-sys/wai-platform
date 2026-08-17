@@ -15,6 +15,7 @@ describe('Phase 2 Unit Tests: Conversation Engine & AI Abstraction Layer', () =>
     language: 'it',
     communicationTone: 'cordial_empathic',
     avatarPlaceholderUrl: 'S',
+    enableAiHumanization: false,
     isDefault: true,
     status: 'active',
     settingsJson: {},

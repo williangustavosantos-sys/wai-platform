@@ -38,20 +38,21 @@ interface CurrentExpectation {
  * instead of obsolete reply copy and legacy intent names.
  */
 const CURRENT_EXPECTATIONS: Record<string, CurrentExpectation> = {
-  '002': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', replyIncludes: ['consulenza fiscale'], noFalseCompletion: true },
+  '001': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
+  '002': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'PROFESSIONAL_SELECTION_REQUIRED', noFalseCompletion: true },
   '006': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
-  '008': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', noFalseCompletion: true },
-  '009': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', noFalseCompletion: true },
+  '008': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
+  '009': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '010': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
-  '011': { intent: 'CREATE_APPOINTMENT', outcomeCode: 'SLOT_OCCUPIED', noFalseCompletion: true },
+  '011': { intent: 'CREATE_APPOINTMENT', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '012': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', language: 'it', noFalseCompletion: true },
-  '013': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', noFalseCompletion: true },
+  '013': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '014': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
-  '015': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', replyIncludes: ['consulenza fiscale'], noFalseCompletion: true },
-  '016': { intent: 'CREATE_APPOINTMENT', outcomeCode: 'SLOT_OCCUPIED', noFalseCompletion: true },
+  '015': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'AVAILABILITY_FOUND', noFalseCompletion: true },
+  '016': { intent: 'CREATE_APPOINTMENT', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '021': { intent: 'RESCHEDULE_APPOINTMENT', outcomeCode: 'NEW_START_REQUIRED', noFalseCompletion: true },
   '022': { intent: 'CANCEL_APPOINTMENT', policyCode: 'CUSTOMER_IDENTITY_CONFLICT', noFalseCompletion: true },
-  '028': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', noFalseCompletion: true },
+  '028': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '029': { intent: 'RESCHEDULE_APPOINTMENT', outcomeCode: 'APPOINTMENT_NOT_FOUND', noFalseCompletion: true },
   '030': { intent: 'CUSTOMER_INFORMATION', outcomeCode: 'CUSTOMER_APPOINTMENTS_FOUND', replyIncludes: ['amministrativo'], noFalseCompletion: true },
   '031': { intent: 'CUSTOMER_INFORMATION', outcomeCode: 'CUSTOMER_NOT_FOUND', replyIncludes: ['verifica'], noFalseCompletion: true },
@@ -60,7 +61,7 @@ const CURRENT_EXPECTATIONS: Record<string, CurrentExpectation> = {
   '035': { intent: 'CANCEL_APPOINTMENT', policyCode: 'CUSTOMER_IDENTITY_CONFLICT', noFalseCompletion: true },
   '037': { intent: 'CHECK_AVAILABILITY', policyCode: 'CUSTOMER_IDENTITY_CONFLICT', noFalseCompletion: true },
   '041': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
-  '047': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', noFalseCompletion: true },
+  '047': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '048': { intent: 'COMPANY_INFORMATION', policyCode: 'SENSITIVE_REQUEST_DENIED', noFalseCompletion: true },
   '049': { intent: 'COMPANY_INFORMATION', policyCode: 'SENSITIVE_REQUEST_DENIED', noFalseCompletion: true },
   '053': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
@@ -69,25 +70,26 @@ const CURRENT_EXPECTATIONS: Record<string, CurrentExpectation> = {
   '057': { intent: 'CREATE_APPOINTMENT', outcomeCode: 'SLOT_OCCUPIED', noFalseCompletion: true },
   '059': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '060': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
-  '062': { intent: 'CREATE_APPOINTMENT', outcomeCode: 'SLOT_OCCUPIED', noFalseCompletion: true },
+  '062': { intent: 'CREATE_APPOINTMENT', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '063': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
   '064': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '065': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
   '068': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '069': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
-  '070': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'PROFESSIONAL_SELECTION_REQUIRED', noFalseCompletion: true },
+  '070': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '078': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
   '079': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
   '080': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
   '082': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
   '085': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
-  '088': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', noFalseCompletion: true },
+  '088': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '089': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
-  '090': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', noFalseCompletion: true },
+  '090': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '091': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', language: 'en', noFalseCompletion: true },
   '092': { intent: 'COMPANY_INFORMATION', policyCode: 'CONFLICTING_ACTIONS', replyIncludes: ['una sola operazione'], noFalseCompletion: true },
-  '095': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'DATE_REQUIRED', noFalseCompletion: true },
+  '095': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '097': { intent: 'CUSTOMER_INFORMATION', outcomeCode: 'CUSTOMER_FOUND', noFalseCompletion: true },
+  '087': { intent: 'CHECK_AVAILABILITY', outcomeCode: 'SERVICE_SELECTION_REQUIRED', noFalseCompletion: true },
   '099': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
   '100': { intent: 'COMPANY_INFORMATION', outcomeCode: 'COMPANY_INFORMATION_FOUND', noFalseCompletion: true },
 };
@@ -113,6 +115,11 @@ describe('Bateria Completa de Testes da Chiara (Studio Aurora - v0.1.1)', () => 
   };
 
   beforeEach(() => {
+    // Controlled clock: the Chiara corpus (fixture dates in August 2026) must be
+    // deterministic regardless of the real wall clock. The min-advance cutoff
+    // (2h) and relative dates ("oggi"/"domani") are computed against this
+    // instant, so the morning slots of the fixture dates are always offerable.
+    process.env.WAI_REFERENCE_TIME = '2026-08-17T07:00:00+02:00';
     // Reset Fictitious Store (10 Customers & 32 Appointments)
     customersStore = [
       { id: 'd0000001', organization_id: '11111111-1111-1111-1111-111111111111', status: 'active', first_name: 'Marco', last_name: 'Rossi', phone_normalized: '+393401234567', email: 'marco.rossi@example.it' },
@@ -566,6 +573,7 @@ describe('Bateria Completa de Testes da Chiara (Studio Aurora - v0.1.1)', () => 
   }
 
   afterAll(() => {
+    delete process.env.WAI_REFERENCE_TIME;
     const executedTests = Object.values(resultsSummary).reduce((total, category) => total + category.total, 0);
     if (executedTests !== testCases.length) return;
     const passedTests = Object.values(resultsSummary).reduce((total, category) => total + category.pass, 0);

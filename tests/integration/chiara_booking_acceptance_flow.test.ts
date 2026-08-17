@@ -64,6 +64,8 @@ vi.mock('@/modules/crm/crm.service', async () => {
 vi.mock('@/modules/messages/messages.service', () => ({
   listConversations: vi.fn().mockResolvedValue([]),
   createConversation: vi.fn(),
+  getConversation: vi.fn().mockResolvedValue(undefined),
+  updateConversationWorkflowState: vi.fn().mockResolvedValue({ success: true }),
   listMessages: vi.fn().mockImplementation(async () => [...acceptanceState.messages]),
   createMessage: vi.fn().mockImplementation(async (
     _client: unknown,
@@ -90,6 +92,26 @@ vi.mock('@/modules/tools/tools.service', () => ({
   DEFINED_TOOLS: [],
   executeToolByName: vi.fn().mockImplementation(async (name: string, args: Record<string, unknown>) => {
     if (name === 'checkAvailability') {
+      // Range query (automatic availability lookup after service + professional):
+      // returns concrete slots across the window, never "date required".
+      if (args.startDate && args.endDate) {
+        return {
+          success: true,
+          code: 'AVAILABILITY_FOUND',
+          result: {
+            days: [
+              {
+                date: args.startDate,
+                availableSlots: ['09:00', '10:00'],
+                slotsDetails: [
+                  { time: '09:00', professionalId: 'professional-1', professionalName: 'Dott.ssa Bianchi' },
+                  { time: '10:00', professionalId: 'professional-1', professionalName: 'Dott.ssa Bianchi' },
+                ],
+              },
+            ],
+          },
+        };
+      }
       if (!args.date) return { success: false, code: 'DATE_REQUIRED', error: 'Date required' };
       return {
         success: true,
@@ -143,7 +165,11 @@ describe('Chiara booking orchestration acceptance flow', () => {
 
     const start = await turn('I would like to book a tax consultation', 1);
     expect(start.detectedIntent).toBe('CHECK_AVAILABILITY');
-    expect(start.replyText).toContain('What date do you prefer?');
+    // Nova UX: serviço + profissional resolvidos → busca de disponibilidade
+    // AUTOMÁTICA com opções concretas. Nunca pergunta a data primeiro.
+    expect(start.metadata?.flowStep).toBe('SLOTS');
+    expect(start.replyText).toContain('available times');
+    expect(start.replyText).not.toContain('What date do you prefer?');
     expect(acceptanceState.appointmentCreates).toBe(0);
 
     const date = await turn('Tomorrow', 2);

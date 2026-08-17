@@ -8,14 +8,11 @@ import {
   createAppointment as calendarCreateAppointment,
   updateAppointmentStatus,
   rescheduleAppointment
-} from '@/modules/calendar/calendar.service';
-import {
-  listCustomers,
-  createCustomer as crmCreateCustomer,
-  normalizePhoneNumber
-} from '@/modules/crm/crm.service';
+} from '@/modules/calendar/calendar.service';import { listCustomers, createCustomer as crmCreateCustomer, normalizePhoneNumber } from '@/modules/crm/crm.service';
+import { updateConversationStatus } from '@/modules/messages/messages.service';
 import { getBusinessRulesConfig, listBusinessExceptions, createBusinessException } from '@/modules/rules/rules.service';
 import { getOrganizationDateKey, getOrganizationDayRange, organizationLocalDateTimeToUtc } from '@/modules/shared/organization-timezone';
+import { referenceNow } from '@/modules/shared/reference-time';
 import { verifyOrganizationAccess } from '@/security/auth';
 import {
   CheckAvailabilityInput,
@@ -113,6 +110,13 @@ export const DEFINED_TOOLS: ToolDefinition[] = [
     description: 'Recupera le informazioni sulla società (indirizzo, telefono, orari, servizi, professionisti, cancellazione).',
     parameters: {
       queryType: { type: 'string', description: 'Tipo di query (hours, address, services, professionals, etc.)', required: false }
+    }
+  },
+  {
+    name: 'handoff_to_human',
+    description: 'Passa la conversazione a un operatore umano: aggiorna lo stato della conversazione a human_handoff e registra la richiesta in auditoria.',
+    parameters: {
+      reason: { type: 'string', description: 'Motivo del passaggio a un operatore umano', required: false }
     }
   },
   {
@@ -272,7 +276,10 @@ export async function executeCheckAvailability(
        endD = reqEndDate.toISOString().slice(0, 10);
     }
 
-    const now = new Date();
+    // Test-only clock override: min-advance and the "today" boundary are
+    // computed against the controlled clock (explicit referenceTime or
+    // WAI_REFERENCE_TIME), so availability is deterministic in tests.
+    const now = referenceNow(input.referenceTime);
     const todayStr = getOrganizationDateKey(now, timezone);
 
     const rules = await getBusinessRulesConfig(client, client, userId, organizationSlug, correlationId || 'check-avail-rules');
@@ -495,6 +502,28 @@ export async function executeToolByName(
           const information = await executeGetCompanyInformation(client, userId, organizationSlug);
           return { ...information, code: information.success ? 'COMPANY_INFORMATION_FOUND' : information.code };
         }
+      case 'handoff_to_human': {
+        // Operational handoff: the system updates the conversation to
+        // `human_handoff` and records the audit. The reply is only rendered
+        // after this call succeeds — never claim a transfer that wasn't persisted.
+        const conversationId = typeof args?.conversationId === 'string' ? args.conversationId : undefined;
+        if (!conversationId) {
+          return { success: false, code: 'HANDOFF_MISSING_CONVERSATION', error: 'Conversazione non identificata per il passaggio a un operatore umano.' };
+        }
+        const updated = await updateConversationStatus(
+          client,
+          adminClient,
+          userId,
+          organizationSlug,
+          conversationId,
+          'human_handoff',
+          correlationId || 'handoff',
+        );
+        if (!updated.success) {
+          return { success: false, code: 'HANDOFF_FAILED', error: updated.error || 'Impossibile trasferire la conversazione a un operatore umano.' };
+        }
+        return { success: true, code: 'HANDOFF_REQUESTED', result: { status: 'human_handoff' } };
+      }
       case 'ownerListAgenda':
         return await executeOwnerListAgenda(client, userId, organizationSlug, args.date);
       case 'ownerBlockCalendar':

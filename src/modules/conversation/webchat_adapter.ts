@@ -1,4 +1,4 @@
-import { ChannelAdapter } from './conversation.types';
+import { CardSelection, ChannelAdapter } from './conversation.types';
 import { ConversationChannel } from '../messages/messages.types';
 
 export interface WebChatPayload {
@@ -6,6 +6,8 @@ export interface WebChatPayload {
   customerPhone?: string;
   text: string;
   sender?: string;
+  /** Structured card click from the WebChat UI (optional). */
+  selection?: CardSelection;
 }
 
 /**
@@ -14,16 +16,17 @@ export interface WebChatPayload {
 export class WebChatAdapter implements ChannelAdapter {
   readonly channelName: ConversationChannel = 'webchat';
 
-  async receiveMessage(payload: unknown): Promise<{ conversationId?: string; customerPhone?: string; text: string }> {
+  async receiveMessage(payload: unknown): Promise<{ conversationId?: string; customerPhone?: string; text: string; selection?: CardSelection }> {
     const data = payload as WebChatPayload;
-    if (!data || typeof data.text !== 'string' || !data.text.trim()) {
+    if (!data || (!data.text && !data.selection)) {
       throw new Error('Payload webchat inválido ou vazio.');
     }
 
     return {
       conversationId: data.conversationId,
       customerPhone: data.customerPhone,
-      text: data.text.trim()
+      text: (data.text || '').trim(),
+      selection: data.selection
     };
   }
 

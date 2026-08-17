@@ -11,6 +11,12 @@ export interface CheckAvailabilityInput {
   serviceId?: string;
   userSearchText?: string;
   professionalId?: string;
+  /**
+   * Test-only clock override (ISO 8601). When present, the min-advance cutoff
+   * and the "today" boundary are computed relative to this instant instead of
+   * the real wall clock, so availability checks are deterministic in tests.
+   */
+  referenceTime?: string;
 }
 
 export interface FindCustomerInput {

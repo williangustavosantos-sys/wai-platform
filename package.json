@@ -12,7 +12,10 @@
     "test:chiara:offline": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/chiara/chiara_test_runner.test.ts",
     "test:scenarios:offline": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/chiara/real_conversation_scenarios.test.ts",
     "test:supabase:qa": "RUN_REAL_SUPABASE_QA=true vitest run tests/chiara/real_supabase_qa.test.ts --reporter=verbose",
-    "test:p1:supabase:qa": "RUN_REAL_SUPABASE_QA=true vitest run tests/p1/real_pilot_qa.test.ts --reporter=verbose"
+    "test:real": "RUN_REAL_SUPABASE_QA=true vitest run tests/chiara/real_supabase_qa.test.ts tests/audit/real_supabase_handoff_cancel.test.ts --no-file-parallelism --reporter=verbose",
+    "test:p1:supabase:qa": "RUN_REAL_SUPABASE_QA=true vitest run tests/p1/real_pilot_qa.test.ts --reporter=verbose",
+    "test:qa:conversations": "OFFLINE_AI_TEST=true GOOGLE_GENERATIVE_AI_API_KEY='' vitest run tests/qa/conversation_qa_suite.test.ts",
+    "test:qa:humanization": "vitest run tests/qa/humanization_qa_suite.test.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "0.0.55",
@@ -20,7 +23,10 @@
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.111.0",
     "ai": "^3.4.33",
+    "date-fns": "^4.4.0",
     "dotenv": "^17.4.2",
+    "fuse.js": "^7.5.0",
+    "motion": "^12.43.0",
     "next": "16.2.12",
     "react": "19.2.4",
     "react-dom": "19.2.4",

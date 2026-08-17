@@ -1,6 +1,6 @@
 import { logger } from '@/logging/logger';
 import { ConversationMessage } from '../messages/messages.types';
-import { Intent } from '../conversation/conversation.types';
+import { Intent, OperationalResult } from '../conversation/conversation.types';
 import { ToolDefinition } from '../tools/tools.types';
 import { DigitalEmployeeConfig } from '../assistant/assistant.types';
 import { AIProvider, AIProviderTurnOutput, ToolResultSummary } from './ai.types';
@@ -293,5 +293,20 @@ export class SimpleAIProvider implements AIProvider {
 
     if (draftReply) return draftReply;
     return `Ciao! Sono ${assistantName}. Posso aiutarti a trovare un orario disponibile per la tua visita oppure gestire un appuntamento esistente. Come vorresti procedere?`;
+  }
+
+  async humanizeResponse(
+    _config: DigitalEmployeeConfig | null,
+    operationalResult: OperationalResult,
+    _employee: DigitalEmployeeConfig,
+    _organizationSlug: string,
+    _correlationId: string,
+  ): Promise<string> {
+    void _config;
+    void _employee;
+    void _organizationSlug;
+    void _correlationId;
+    // SimpleAIProvider does not use LLM humanization — returns base reply text
+    return operationalResult.baseReplyText;
   }
 }

@@ -1,17 +1,86 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { Logger } from '@/logging/logger';
 import { getAssistantConfig } from '@/modules/assistant/assistant.service';
-import { createConversation, listMessages, createMessage } from '@/modules/messages/messages.service';
+import { createConversation, listMessages, createMessage, getConversation, updateConversationWorkflowState } from '@/modules/messages/messages.service';
 import { GeminiAIProvider } from '@/modules/ai/gemini_ai_provider';
-import { AIProviderContext, ConversationWorkflow, extractCustomerPhone, LocalIntentRouter, RoutedEntities } from '@/modules/ai/local_intent_router';
+import { AIProviderContext, extractCustomerPhone, LocalIntentRouter, RoutedEntities, ConversationWorkflow } from '@/modules/ai/local_intent_router';
 import { DeterministicResponseGenerator } from '@/modules/ai/deterministic_response_generator';
 import { ToolResultSummary } from '@/modules/ai/ai.types';
 import { executeToolByName, DEFINED_TOOLS } from '@/modules/tools/tools.service';
 import { listServices, listProfessionals } from '@/modules/calendar/calendar.service';
 import { listCustomers, normalizePhoneNumber } from '@/modules/crm/crm.service';
 import { verifyOrganizationAccess } from '@/security/auth';
-import { ConversationTurnResult, ChannelAdapter, ToolCallTelemetry, TrustedConversationContext } from './conversation.types';
+import { ConversationTurnResult, ChannelAdapter, ToolCallTelemetry, TrustedConversationContext, ConversationWorkflowState, CardSelection, StructuredMessage, OperationalResult } from './conversation.types';
 import { resolveCustomerLanguage } from './customer_language';
+import { computeBookingFlow, BookingFlowResult, BookingFlowStep } from './booking.flow';
+import { ResponseValidator } from './response.validator';
+import { getOrganizationDateKey } from '@/modules/shared/organization-timezone';
+import { referenceNow } from '@/modules/shared/reference-time';
+
+/**
+ * Maps a guided booking flow step to the operational outcome code that
+ * callers (tests, UI) expect to find in metadata.toolCalls.
+ */
+function mapFlowStepToOutcomeCode(step: BookingFlowStep, availabilityResult?: ToolResultSummary): string | undefined {
+  switch (step) {
+    case 'SERVICE':
+      return 'SERVICE_SELECTION_REQUIRED';
+    case 'PROFESSIONAL':
+      return 'PROFESSIONAL_SELECTION_REQUIRED';
+    case 'DATE':
+      // If checkAvailability already ran and returned days, treat as available;
+      // otherwise the step is asking for a date.
+      if (availabilityResult && availabilityResult.success) {
+        return 'SLOTS_AVAILABLE';
+      }
+      return 'DATE_REQUIRED';
+    case 'SLOTS':
+      // Automatic availability lookup: available when the real calendar
+      // returned slots over the search window.
+      if (availabilityResult && availabilityResult.success) {
+        return 'SLOTS_AVAILABLE';
+      }
+      return 'NO_SLOTS_AVAILABLE';
+    case 'TIME':
+      if (availabilityResult && availabilityResult.success) {
+        return 'SLOTS_AVAILABLE';
+      }
+      return 'NO_SLOTS_AVAILABLE';
+    case 'IDENTITY':
+      return 'CUSTOMER_FULL_NAME_REQUIRED';
+    case 'CONFIRMATION':
+      return 'CONFIRMATION_REQUIRED';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Maps a stored card selection to authoritative workflow entities. A card
+ * click carries the exact catalog id chosen by the customer, so it must win
+ * over any fuzzy text re-matching of the label (e.g. "Consulta Inicial" also
+ * fuzzy-matches "Consulta Online" and would otherwise be dropped).
+ */
+function selectionWorkflowEntities(selection: CardSelection | undefined): NonNullable<ConversationWorkflow['entities']> {
+  if (!selection) return {};
+  switch (selection.type) {
+    case 'service':
+      return selection.id ? { service: { id: selection.id, name: selection.label || selection.id } } : {};
+    case 'professional':
+      return selection.id ? { professional: { id: selection.id, name: selection.label || selection.id } } : {};
+    case 'date':
+      return selection.id ? { date: selection.id } : {};
+    case 'time':
+      return selection.id ? { time: selection.id } : {};
+    case 'slot':
+      // A merged slot card carries date + time in one click.
+      return selection.payload?.date && selection.payload?.time
+        ? { date: selection.payload.date as string, time: selection.payload.time as string }
+        : {};
+    default:
+      return {};
+  }
+}
 
 function workflowEntities(entities: RoutedEntities): NonNullable<ConversationWorkflow['entities']> {
   const {
@@ -59,13 +128,31 @@ function deriveConversationWorkflow(
       continue;
     }
     if (message.role !== 'customer') continue;
+
+    // A stored card selection is authoritative memory: it carries the exact
+    // catalog id chosen by the customer. Re-routing the label through the
+    // fuzzy matcher can fail on similar names ("Consulta Inicial" also matches
+    // "Consulta de Retorno" / "Consulta Online"), silently losing the chosen
+    // service/professional/date/time from the derived workflow.
+    const selection = message.metadata?.selection as CardSelection | undefined;
+    const hasStoredSelection = Boolean(
+      selection
+      && (selection.type === 'service'
+        || selection.type === 'professional'
+        || selection.type === 'date'
+        || selection.type === 'time'
+        || selection.type === 'slot'),
+    );
     const route = router.route(message.content, { ...context, workflow });
-    const entities = workflowEntities(route.entities);
+    const entities = {
+      ...workflowEntities(route.entities),
+      ...selectionWorkflowEntities(selection),
+    };
     const hasEntities = Object.keys(entities).length > 0;
 
     if (route.intent === 'RESCHEDULE_APPOINTMENT') {
       workflow = { intent: 'RESCHEDULE_APPOINTMENT', entities: { ...(workflow?.entities || {}), ...entities } };
-    } else if (route.intent === 'CHECK_AVAILABILITY' || route.intent === 'CREATE_APPOINTMENT') {
+    } else if (route.intent === 'CHECK_AVAILABILITY' || route.intent === 'CREATE_APPOINTMENT' || hasStoredSelection) {
       workflow = {
         intent: workflow?.intent === 'RESCHEDULE_APPOINTMENT' ? workflow.intent : 'CHECK_AVAILABILITY',
         entities: { ...(workflow?.entities || {}), ...entities },
@@ -118,24 +205,35 @@ export async function processConversationTurn(
     conversationId = created.data.id;
   }
 
+  // Load existing conversation to get persisted workflow_state
+  const existingConversation = await getConversation(client, userId, organizationSlug, conversationId);
+  let previousWorkflowState: ConversationWorkflowState | undefined = existingConversation?.workflowState || undefined;
+
   // 3. Persistir mensagem do cliente (Role: 'customer') sob auditoria/RLS
   const customerMessage = await createMessage(client, adminClient, userId, organizationSlug, {
     conversationId,
     role: 'customer',
     content: messageData.text,
-    metadata: { channel: channelAdapter.channelName }
+    metadata: {
+      channel: channelAdapter.channelName,
+      // Persist the card selection so the booking memory can be reconstructed
+      // from history (deriveConversationWorkflow) even when the workflow_state
+      // column is unavailable or a write fails. Without it, a card label that
+      // fuzzy-matches several catalog services is silently lost.
+      ...(messageData.selection ? { selection: messageData.selection } : {}),
+    }
   }, correlationId);
   if (!customerMessage.success) {
     throw new Error(customerMessage.error || 'Impossibile registrare il messaggio del cliente.');
   }
 
-  // 4. Carregar contexto da empresa (Configurazione Assistente e Cronologia Messaggi)
+  // 4. Carregar contexto da empresa (Configuração Assistente e Cronologia Mensagens)
   const [config, history] = await Promise.all([
     getAssistantConfig(client, adminClient, userId, organizationSlug, correlationId),
     listMessages(client, userId, organizationSlug, conversationId)
   ]);
 
-  // 5. Invocar Motor Abstrato de Inteligência Artificial
+  // 5. Invocar Motor Abstraído de Inteligência Artificial
   const localRouter = new LocalIntentRouter();
   const services = await listServices(client, userId, organizationSlug);
   const professionals = await listProfessionals(client, userId, organizationSlug);
@@ -168,20 +266,66 @@ export async function processConversationTurn(
     professionals,
     customers,
     customer: verifiedCustomer,
-    isOwner: isOrganizationStaff
+    isOwner: isOrganizationStaff,
+    referenceTime: trustedContext?.referenceTime
   };
   const workflow = deriveConversationWorkflow(workflowHistory, localRouter, baseContext);
   const context: AIProviderContext = { ...baseContext, workflow };
 
   const localRoute = localRouter.route(messageData.text, context);
-  
+
   let detectedIntent = localRoute.intent;
   let rawToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let providerName = 'LocalIntentRouter';
+  let flowStep: BookingFlowStep | undefined;
+  let structuredContent: StructuredMessage | undefined;
+  let operationalResult: { type: string; data: Record<string, unknown>; language: string; criticalData: string[]; baseReplyText: string } | undefined;
 
   const isOfflineMode = !process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.OFFLINE_AI_TEST === 'true';
 
-  if (localRoute.confidence > 0.8 && !localRoute.needsClarification) {
+  // Booking flow integration: booking.flow.ts is the sole authority for
+  // CREATE_APPOINTMENT / CHECK_AVAILABILITY steps. A structured card selection
+  // always drives the booking flow — even when the turn carries no free text
+  // (e.g. the "Conferma" / "Modifica" actions do not classify as a booking
+  // intent on their own).
+  const selection: CardSelection | undefined = messageData.selection;
+  const isGuidedTurn = Boolean(selection);
+  const isBookingIntent = localRoute.intent === 'CREATE_APPOINTMENT'
+    || localRoute.intent === 'CHECK_AVAILABILITY'
+    || isGuidedTurn;
+  if (isGuidedTurn) {
+    if (selection?.type === 'confirm' || selection?.type === 'modify') {
+      // Confirming/modifying a draft is part of creating the appointment.
+      detectedIntent = 'CREATE_APPOINTMENT';
+    } else if (detectedIntent !== 'CREATE_APPOINTMENT' && detectedIntent !== 'CHECK_AVAILABILITY') {
+      detectedIntent = 'CHECK_AVAILABILITY';
+    }
+  }
+
+  if (isBookingIntent) {
+    const bookingFlowResult: BookingFlowResult = computeBookingFlow({
+      intent: localRoute.intent,
+      entities: localRoute.entities,
+      selection,
+      services,
+      professionals,
+      hasVerifiedCustomer: Boolean(verifiedCustomer),
+      timezone: access.timezone || 'Europe/Rome',
+      previousState: previousWorkflowState,
+      referenceTime: trustedContext?.referenceTime,
+    });
+
+    flowStep = bookingFlowResult.step;
+
+    if (bookingFlowResult.isBookingFlow) {
+      // booking.flow.ts is the sole authority for booking tool calls: it always
+      // returns the concrete calls for the decided step. The router only
+      // contributes intent + entities — it never decides booking operations.
+      rawToolCalls = bookingFlowResult.toolCalls;
+    } else {
+      rawToolCalls = localRouter.convertToToolCalls(localRoute, access.timezone);
+    }
+  } else if (localRoute.confidence > 0.8 && !localRoute.needsClarification) {
     logger.info('Local intent router matched with high confidence', { intent: localRoute.intent, confidence: localRoute.confidence });
     rawToolCalls = localRouter.convertToToolCalls(localRoute, access.timezone);
   } else if (isOfflineMode) {
@@ -227,6 +371,10 @@ export async function processConversationTurn(
     policyDecision = { success: false, code: 'CUSTOMER_IDENTITY_CONFLICT' };
   }
 
+  // A policy decision vetoes the whole turn: no guided card may be rendered and
+  // no synthetic flow outcome may be reported — the safety reply wins instead.
+  const blockedByPolicy = Boolean(policyDecision);
+
   // 6. Execução Transacional das Ferramentas com Proteção Anti-Overlap GIST e CRM
   const telemetry: ToolCallTelemetry[] = [];
   const toolResults: ToolResultSummary[] = [];
@@ -236,9 +384,26 @@ export async function processConversationTurn(
     const t0 = Date.now();
     const resolvedArgs = { ...call.args };
 
-    if (call.name === 'createAppointment' && (resolvedArgs.serviceId === 'AUTO_PRIMARY' || !resolvedArgs.serviceId)) {
-      resolvedArgs.serviceId = services[0]?.id || '';
+    // Test-only clock override: the checkAvailability min-advance cutoff is
+    // computed against trustedContext.referenceTime when provided, so the
+    // suggested slots are deterministic under a controlled clock.
+    if (call.name === 'checkAvailability' && trustedContext?.referenceTime && !resolvedArgs.referenceTime) {
+      resolvedArgs.referenceTime = trustedContext.referenceTime;
     }
+
+    // booking.flow.ts is the sole authority for service resolution: the service
+    // must come from the customer (explicit mention or single-option catalog).
+    // Never silently fall back to services[0] — missing service means the
+    // customer must choose (SERVICE step).
+    if (call.name === 'createAppointment'
+      && (!resolvedArgs.serviceId || resolvedArgs.serviceId === 'AUTO_PRIMARY' || resolvedArgs.serviceId === 'AUTO_RESOLVE')) {
+      const error = 'Per completare la prenotazione è necessario selezionare prima il servizio.';
+      const result = { success: false, code: 'SERVICE_SELECTION_REQUIRED', error };
+      telemetry.push({ toolName: call.name, arguments: resolvedArgs, result, executionTimeMs: Date.now() - t0 });
+      toolResults.push({ toolName: call.name, args: resolvedArgs, success: false, code: result.code, error });
+      continue;
+    }
+    // Professional resolution stays defensive (ANY / single-option catalog only).
     if (call.name === 'createAppointment' && (resolvedArgs.professionalId === 'AUTO_PRIMARY' || !resolvedArgs.professionalId)) {
       resolvedArgs.professionalId = professionals[0]?.id || '';
     }
@@ -249,6 +414,24 @@ export async function processConversationTurn(
         ? availability.result as Record<string, unknown>
         : {};
       const requestedTime = localRoute.entities.time;
+
+      // The calendar is authoritative for availability. When it reports no
+      // bookable slots at all (closure, weekend, fully-booked day), creation
+      // must be refused — never force-create on an unavailable day. Past dates
+      // return an empty result (checkAvailability skips them), so the guard only
+      // applies to today-or-future requests and the authoritative GIST overlap
+      // check inside createAppointment still yields SLOT_OCCUPIED for past slots.
+      const requestedDateStr = typeof resolvedArgs.date === 'string'
+        ? resolvedArgs.date
+        : (typeof resolvedArgs.startAt === 'string' ? resolvedArgs.startAt.slice(0, 10) : '');
+      const isPastRequest = Boolean(requestedDateStr && requestedDateStr < getOrganizationDateKey(referenceNow(trustedContext?.referenceTime), access.timezone));
+      if (!isPastRequest && availability && availability.success && availability.code === 'NO_AVAILABILITY') {
+        const error = 'Nessuna fascia disponibile per il giorno richiesto.';
+        const result = { success: false, code: 'NO_SLOTS_AVAILABLE', error };
+        telemetry.push({ toolName: call.name, arguments: resolvedArgs, result, executionTimeMs: Date.now() - t0 });
+        toolResults.push({ toolName: call.name, args: resolvedArgs, success: false, code: result.code, error });
+        continue;
+      }
 
       if (resolvedArgs.professionalId === 'ANY') {
         const slotDetails = Array.isArray(availabilityData.slotsDetails)
@@ -269,6 +452,12 @@ export async function processConversationTurn(
     // Resolve phone for findCustomer if missing
     if (call.name === 'findCustomer' && (!resolvedArgs.phone || resolvedArgs.phone === 'RESOLVED_FROM_CRM')) {
       resolvedArgs.phone = suppliedPhone || '';
+    }
+
+    // A handoff is operational only against a concrete conversation: the tool
+    // must persist the human_handoff status, so inject the resolved id here.
+    if (call.name === 'handoff_to_human') {
+      resolvedArgs.conversationId = conversationId;
     }
 
     if (call.name === 'createAppointment' && !resolvedCustomerId && !resolvedArgs.customerId) {
@@ -318,9 +507,9 @@ export async function processConversationTurn(
       if (resolvedCustomerId) {
         resolvedArgs.customerId = resolvedCustomerId;
       } else {
-        const errDesc = 'Nessun cliente registrato nel CRM trovabile. Indicare nome e telefono per procedere.';
+        const errDesc = 'Nessun cliente registrato nel CRM trovato. Indicare nome e telefono per procedere.';
         telemetry.push({ toolName: call.name, arguments: resolvedArgs, result: { success: false, error: errDesc }, executionTimeMs: Date.now() - t0 });
-        toolResults.push({ toolName: call.name, success: false, error: errDesc });
+        toolResults.push({ toolName: call.name, args: resolvedArgs, success: false, error: errDesc });
         continue;
       }
     }
@@ -355,7 +544,7 @@ export async function processConversationTurn(
             const errDesc = 'Nessun appuntamento attivo trovato da modificare o cancellare.';
             const result = { success: false, code: 'APPOINTMENT_NOT_FOUND', error: errDesc };
             telemetry.push({ toolName: call.name, arguments: resolvedArgs, result, executionTimeMs: Date.now() - t0 });
-            toolResults.push({ toolName: call.name, success: false, code: result.code, error: errDesc });
+            toolResults.push({ toolName: call.name, args: resolvedArgs, success: false, code: result.code, error: errDesc });
             continue;
           }
         }
@@ -370,12 +559,7 @@ export async function processConversationTurn(
       continue;
     }
 
-    if (resolvedArgs.serviceId === 'AUTO_PRIMARY') {
-      const combinedText = [...history.map(m => m.content), messageData.text].join(' ').toLowerCase();
-      const matchedService = services.find(s => combinedText.includes(s.name.toLowerCase()) || (combinedText.includes('fiscale') && s.name.toLowerCase().includes('fiscale')));
-      resolvedArgs.serviceId = (matchedService || services[0])?.id || '';
-    }
-
+    // Booking flow: AUTO_PRIMARY is only used for professional fallback (never service auto-resolve)
     if (resolvedArgs.professionalId === 'AUTO_PRIMARY') {
       resolvedArgs.professionalId = professionals[0]?.id || '';
     }
@@ -417,24 +601,227 @@ export async function processConversationTurn(
     }
   }
 
-  // 7. Guardrails: A resposta final é sintetizada ESCLUSIVAMENTE a partir dos resultados transacionados no banco
-  const deterministicGen = new DeterministicResponseGenerator();
-  const finalReply = deterministicGen.generateReply(
-    detectedIntent,
-    toolResults,
-    localRoute.entities,
-    messageData.text,
-    access.timezone,
-    customerLanguage,
-  );
+  // For guided booking steps that don't execute tools, emit a synthetic flow
+  // outcome entry so callers (UI, tests, analytics) can read the step code
+  // from metadata.toolCalls — the same contract used for tool-driven outcomes.
+  if (isBookingIntent && flowStep && flowStep !== 'NONE' && flowStep !== 'CREATE' && !blockedByPolicy) {
+    const actionable = [...toolResults].reverse().find(r => r.toolName === 'checkAvailability');
+    const flowCode = mapFlowStepToOutcomeCode(flowStep, actionable);
+    if (flowCode && !toolResults.some(r => r.toolName === 'checkAvailability')) {
+      telemetry.push({
+        toolName: 'bookingFlow',
+        arguments: { flowStep },
+        result: { success: true, code: flowCode },
+        executionTimeMs: 0,
+      });
+      toolResults.push({
+        toolName: 'bookingFlow',
+        args: { flowStep },
+        success: true,
+        code: flowCode,
+        result: {},
+      });
+    }
+  }
+
+  // 7. Persist the new workflow state (best-effort)
+  let newWorkflowState: ConversationWorkflowState | undefined;
+  if (isBookingIntent && localRoute.confidence > 0.4) {
+    // Reconstruct state from the booking flow result
+    newWorkflowState = previousWorkflowState ? { ...previousWorkflowState } : undefined;
+    if (flowStep && (isGuidedTurn || isBookingIntent)) {
+      const bookingFlowResult = computeBookingFlow({
+        intent: localRoute.intent,
+        entities: localRoute.entities,
+        selection,
+        services,
+        professionals,
+        hasVerifiedCustomer: Boolean(verifiedCustomer),
+        timezone: access.timezone || 'Europe/Rome',
+        previousState: previousWorkflowState,
+        referenceTime: trustedContext?.referenceTime,
+      });
+      newWorkflowState = { ...bookingFlowResult.state };
+    }
+    if (newWorkflowState) {
+      newWorkflowState.step = flowStep as ConversationWorkflowState['step'];
+      if (flowStep === 'CREATE' && toolResults.some(r => r.toolName === 'createAppointment' && r.success && r.code === 'APPOINTMENT_CREATED')) {
+        newWorkflowState.step = 'COMPLETED';
+        // Clear workflow state on successful completion
+        await updateConversationWorkflowState(client, adminClient, userId, organizationSlug, conversationId, null, correlationId);
+      } else {
+        await updateConversationWorkflowState(client, adminClient, userId, organizationSlug, conversationId, newWorkflowState, correlationId);
+      }
+    }
+  }
+
+  // 8. Guardrails: generate the final reply
+  const deterministicGen = new DeterministicResponseGenerator({
+    organization: {
+      id: access.organizationId,
+      name: access.organizationName,
+      timezone: access.timezone,
+      settingsJson: access.settingsJson,
+    },
+    customer: verifiedCustomer,
+    conversation: {
+      id: conversationId,
+      organization_id: access.organizationId,
+      channel: channelAdapter.channelName,
+      status: existingConversation?.status || 'active',
+      created_at: existingConversation?.createdAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    digitalEmployee: config as any,
+    language: customerLanguage === 'it' ? 'it' : customerLanguage === 'en' ? 'en' : 'pt',
+  });
+
+  let finalReply: string;
+  let finalStructuredContent: StructuredMessage | undefined;
+  // Input for the opt-in humanization pipeline: the same deterministic DRG
+  // operational result used for the reply, kept separate so the humanization
+  // step can never alter metadata, outcome codes, or structured cards.
+  let humanizationInput: OperationalResult | undefined;
+
+  if (flowStep && flowStep !== 'NONE' && isBookingIntent && !blockedByPolicy) {
+    // Use the flow-aware response generator for guided booking turns
+    const response = deterministicGen.generateResponse(
+      detectedIntent,
+      {
+        toolResults,
+        workflowState: undefined,
+        professionals,
+        services,
+        flowStep: flowStep!,
+        turnEntities: localRoute.entities,
+        userText: messageData.text,
+      },
+    );
+    finalReply = response.baseReplyText;
+    finalStructuredContent = response.structuredContent;
+    operationalResult = {
+      type: response.operationalResult.type,
+      data: response.operationalResult.data,
+      language: response.operationalResult.language,
+      criticalData: response.operationalResult.criticalData,
+      baseReplyText: response.operationalResult.baseReplyText,
+    };
+    humanizationInput = operationalResult as OperationalResult;
+  } else if (!blockedByPolicy) {
+    // Non-booking intents use the standard grounded reply generator. The reply
+    // text is byte-identical to the legacy path (same generateReply internally);
+    // the operational result is additionally built so the opt-in humanization
+    // pipeline can safely rephrase it.
+    const response = deterministicGen.generateResponse(
+      detectedIntent,
+      {
+        toolResults,
+        flowStep: undefined,
+        turnEntities: localRoute.entities,
+        userText: messageData.text,
+      },
+    );
+    finalReply = response.baseReplyText;
+    if (config?.enableAiHumanization) {
+      humanizationInput = response.operationalResult;
+    }
+  } else {
+    // Policy-blocked turns (identity conflict, third party, prompt injection,
+    // sensitive requests) keep the deterministic guardrail reply — the AI never
+    // rephrases security decisions.
+    finalReply = deterministicGen.generateReply(
+      detectedIntent,
+      toolResults,
+      localRoute.entities,
+      messageData.text,
+      access.timezone,
+      customerLanguage === 'it' ? 'it' : customerLanguage === 'en' ? 'en' : 'pt',
+    );
+  }
+
+  // 8b. Opt-in text humanization (never operational). The AI receives ONLY the
+  // deterministic base reply text + critical data and has no tools: it can never
+  // execute operations, mutate the database, or change dates/times/professionals/
+  // services/prices/status. Any failure (model error, timeout, quota, empty
+  // reply, validator rejection) falls back to baseReplyText — the operational
+  // flow never depends on Gemini.
+  let humanizationApplied = false;
+  // Safety gate: humanization only runs when the deterministic result carries
+  // critical facts for the validator to enforce. Turns without critical data
+  // (status-only outcomes such as cancellation / no availability, or pure
+  // selection prompts) keep the deterministic base text — the AI is never given
+  // an unconstrained rewrite that could drift the status or meaning.
+  if (config && config.enableAiHumanization && !isOfflineMode && !blockedByPolicy
+    && humanizationInput && humanizationInput.criticalData.length > 0) {
+    const aiProvider = new GeminiAIProvider();
+    let candidate = '';
+    try {
+      candidate = await aiProvider.humanizeResponse(
+        config,
+        humanizationInput,
+        config,
+        organizationSlug,
+        correlationId,
+      );
+    } catch (error) {
+      logger.warn('Humanization failed; using deterministic base reply text', {
+        error: error instanceof Error ? error.message : String(error),
+        conversationId,
+      });
+      candidate = '';
+    }
+    let valid = false;
+    try {
+      const validator = new ResponseValidator();
+      valid = candidate.trim().length > 0
+        && validator.validate({
+          humanizedText: candidate,
+          baseText: humanizationInput.baseReplyText,
+          operationalResult: humanizationInput,
+        });
+    } catch (error) {
+      // A validator exception (e.g. malformed critical data) must never take
+      // the operational flow down: fall back to the deterministic base text.
+      logger.warn('ResponseValidator failed; using deterministic base reply text', {
+        error: error instanceof Error ? error.message : String(error),
+        conversationId,
+      });
+      valid = false;
+    }
+    finalReply = valid ? candidate : humanizationInput.baseReplyText;
+    humanizationApplied = valid;
+    logger.info(valid ? 'Humanized reply applied' : 'Humanization rejected by validator or empty; using deterministic base reply text', {
+      conversationId,
+      intent: detectedIntent,
+    });
+  }
 
   const processingTimeMs = Date.now() - startTime;
+  // A successfully persisted appointment ALWAYS reports BOOKING_CREATED as the
+  // outcome — regardless of which tool ran last or how the intent was mapped.
+  const createSucceeded = telemetry.some((t) => {
+    if (t.toolName !== 'createAppointment') return false;
+    const result = t.result as { success?: boolean; code?: string } | undefined;
+    return result?.success === true && result?.code === 'APPOINTMENT_CREATED';
+  });
+  // Derive a single outcomeCode for observability/UI/tests from the operational
+  // result (flow-aware turns) or the last tool result code (tool-driven turns).
+  const derivedOutcomeCode = createSucceeded
+    ? 'BOOKING_CREATED'
+    : (operationalResult?.type
+      || (telemetry.length > 0 ? (telemetry[telemetry.length - 1]?.result as any)?.code : undefined)
+      || undefined);
   const finalMetadata = {
     intent: detectedIntent,
     toolCalls: telemetry,
     processingTimeMs,
     provider: providerName,
     customerLanguage,
+    flowStep,
+    outcomeCode: derivedOutcomeCode,
+    structuredContent: finalStructuredContent,
+    operationalResult,
+    humanizationApplied,
     ...(policyDecision ? { policyDecision } : {}),
   };
 

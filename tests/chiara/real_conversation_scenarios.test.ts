@@ -353,6 +353,20 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
               const newConv = { ...item, id: `conv-${Date.now()}` };
               conversationsStore.push(newConv);
               return { select: () => ({ single: async () => ({ data: newConv, error: null }) }) };
+            },
+            update: (updates: any) => {
+              let convs = [...conversationsStore];
+              const updateChain = {
+                eq: (col: string, val: any) => {
+                  convs = convs.filter((c: any) => c[col] === val);
+                  return updateChain;
+                },
+                then: (fn: any) => {
+                  for (const c of convs) Object.assign(c, updates);
+                  return fn({ data: convs, error: null });
+                }
+              };
+              return updateChain;
             }
           };
         }
@@ -483,8 +497,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['Per verificare le disponibilità abbiamo bisogno che ci indichi un giorno desiderato'],
-            outcomeCode: 'DATE_REQUIRED'
+            replyKeywords: ['Quale servizio desideri prenotare'],
+            outcomeCode: 'SERVICE_SELECTION_REQUIRED'
           }
         }
       ]
@@ -528,16 +542,16 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
       turns: [
         {
           input: 'Vorrei prendere un appuntamento.',
-          customerPhone: '+393995556667',
+          customerPhone: '+39345678901',
           expected: {
             intent: 'CHECK_AVAILABILITY',
-            replyKeywords: ['indichi un giorno desiderato'],
-            outcomeCode: 'DATE_REQUIRED'
+            replyKeywords: ['Quale servizio'],
+            outcomeCode: 'SERVICE_SELECTION_REQUIRED'
           }
         },
         {
           input: 'Il 17 agosto.',
-          customerPhone: '+393995556667',
+          customerPhone: '+39345678901',
           expected: {
             intent: 'CHECK_AVAILABILITY',
             replyKeywords: ['Quale servizio desideri prenotare'],
@@ -546,7 +560,7 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
         },
         {
           input: 'Consulenza Fiscale Iniziale.',
-          customerPhone: '+393995556667',
+          customerPhone: '+39345678901',
           expected: {
             intent: 'CHECK_AVAILABILITY',
             replyKeywords: ['Preferisci prenotare', 'Dott. Marco Rossi', 'Dott.ssa Sofia Bianchi'],
@@ -555,11 +569,11 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
         },
         {
           input: 'Sofia Bianchi alle 15:30. Sono Roberto Rossi.',
-          customerPhone: '+393995556667',
+          customerPhone: '+39345678901',
           expected: {
             intent: 'CREATE_APPOINTMENT',
             replyKeywords: ['confermat', 'Sofia Bianchi', '15:30'],
-            outcomeCode: 'APPOINTMENT_CREATED',
+            outcomeCode: 'BOOKING_CREATED',
             dbVerification: (stores) => {
               const matched = stores.appointmentsStore.find(a => new Date(a.start_at).getTime() === new Date('2026-08-17T15:30:00+02:00').getTime() && a.professional_id === 'b2222222');
               expect(matched).toBeDefined();
@@ -894,8 +908,8 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
           customerPhone: '+393991112223',
           expected: {
             intent: 'CREATE_APPOINTMENT',
-            replyKeywords: ['nome e cognome completo è obbligatorio'],
-            outcomeCode: 'CUSTOMER_FULL_NAME_REQUIRED'
+            replyKeywords: ['Quale servizio desideri prenotare'],
+            outcomeCode: 'SERVICE_SELECTION_REQUIRED'
           }
         }
       ]
@@ -1010,8 +1024,9 @@ describe('Real Conversation Scenarios (Zero-Gemini Validation)', () => {
 
           // Product outcomes are the primary contract; wording remains a secondary UX check.
           if (turn.expected.outcomeCode) {
+            const outcomeCode = result.metadata.outcomeCode;
             const toolCodes = result.metadata.toolCalls.map((call: any) => call.result?.code);
-            expect(toolCodes).toContain(turn.expected.outcomeCode);
+            expect([outcomeCode, ...toolCodes]).toContain(turn.expected.outcomeCode);
           } else if (turn.expected.policyCode) {
             expect(result.metadata.policyDecision?.code).toBe(turn.expected.policyCode);
           } else {

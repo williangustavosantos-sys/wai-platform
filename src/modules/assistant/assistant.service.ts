@@ -16,6 +16,7 @@ function mapDbToDigitalEmployee(row: Record<string, unknown>): DigitalEmployeeCo
     language: (row.language as string) || 'it-IT',
     communicationTone: (row.communication_tone as CommunicationTone) || 'cordial_empathic',
     avatarPlaceholderUrl: (row.avatar_placeholder_url as string) || '/avatars/default.svg',
+    enableAiHumanization: Boolean(row.enable_ai_humanization),
     isDefault: Boolean(row.is_default),
     status: (row.status as DigitalEmployeeStatus) || 'active',
     settingsJson: (row.settings_json as Record<string, unknown>) || {},
@@ -71,16 +72,38 @@ export async function getAssistantConfig(
       language: 'it-IT',
       communication_tone: 'cordial_empathic',
       avatar_placeholder_url: '/avatars/default.svg',
+      enable_ai_humanization: false,
       is_default: true,
       status: 'active',
       settings_json: {},
     };
 
-    const { data: created, error: createError } = await client
+    let created: Record<string, unknown> | null = null;
+    let createError: { message: string; code?: string } | null = null;
+    ({ data: created, error: createError } = await client
       .from('digital_employees')
       .insert([defaultInsert])
       .select('*')
-      .single();
+      .single());
+
+    // The enable_ai_humanization flag is opt-in and was introduced by a later
+    // migration (default false). If the database hasn't applied that migration
+    // yet, the INSERT above is rejected with PGRST204. Degrade gracefully by
+    // retrying without the optional column — the resulting default is identical
+    // (humanization disabled) and the assistant must never brick on it.
+    if (createError?.code === 'PGRST204' && /enable_ai_humanization/i.test(createError.message)) {
+      const { enable_ai_humanization: _omitted, ...safeInsert } = defaultInsert as Record<string, unknown> & {
+        enable_ai_humanization: boolean;
+      };
+      log.warn('enable_ai_humanization column missing; creating default assistant with humanization disabled', {
+        orgId: access.organizationId,
+      });
+      ({ data: created, error: createError } = await client
+        .from('digital_employees')
+        .insert([safeInsert])
+        .select('*')
+        .single());
+    }
 
     if (createError || !created) {
       log.error('Failed to create default digital employee', { error: createError });
@@ -144,7 +167,9 @@ export async function updateAssistantConfig(
     language: current.language,
     communication_tone: current.communicationTone,
     avatar_placeholder_url: current.avatarPlaceholderUrl,
+    enable_ai_humanization: current.enableAiHumanization,
     status: current.status,
+    settings_json: current.settingsJson || {},
   };
 
   const updatePayload: Record<string, unknown> = {};
@@ -154,6 +179,14 @@ export async function updateAssistantConfig(
   if (input.communicationTone !== undefined) updatePayload.communication_tone = input.communicationTone;
   if (input.avatarPlaceholderUrl !== undefined) updatePayload.avatar_placeholder_url = input.avatarPlaceholderUrl.trim();
   if (input.status !== undefined) updatePayload.status = input.status;
+  // Top-level keys are merged so coexisting modules (mascot, future settings)
+  // never clobber each other inside settings_json.
+  if (input.settingsJson !== undefined) {
+    updatePayload.settings_json = {
+      ...(current.settingsJson || {}),
+      ...input.settingsJson,
+    };
+  }
 
   const { data: updated, error: updateError } = await client
     .from('digital_employees')
@@ -175,7 +208,9 @@ export async function updateAssistantConfig(
     language: updatedConfig.language,
     communication_tone: updatedConfig.communicationTone,
     avatar_placeholder_url: updatedConfig.avatarPlaceholderUrl,
+    enable_ai_humanization: updatedConfig.enableAiHumanization,
     status: updatedConfig.status,
+    settings_json: updatedConfig.settingsJson || {},
   };
 
   await recordAuditLog(

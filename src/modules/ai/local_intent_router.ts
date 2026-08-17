@@ -6,10 +6,16 @@ export interface AIProviderContext {
   customer?: { id: string; name?: string; firstName?: string; lastName?: string; isOwner?: boolean };
   isOwner?: boolean;
   workflow?: ConversationWorkflow;
+  /**
+   * Test-only clock override (ISO 8601): relative dates ("domani", "oggi",
+   * weekdays) are resolved against this instant instead of the wall clock.
+   */
+  referenceTime?: string;
 }
 
 import { Intent } from '../conversation/conversation.types';
 import { getOrganizationDateKey, organizationLocalDateTimeToUtc } from '@/modules/shared/organization-timezone';
+import { referenceNow } from '@/modules/shared/reference-time';
 
 export type StructuredIntent = Intent;
 
@@ -134,13 +140,14 @@ function containsAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-function dateInTimezone(timezone: string): Date {
+function dateInTimezone(timezone: string, referenceTime?: string): Date {
+  const now = referenceNow(referenceTime);
   const today = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date());
+  }).format(now);
   return new Date(`${today}T00:00:00Z`);
 }
 
@@ -154,8 +161,8 @@ function formatDate(year: number, month: number, day: number): string | null {
   return candidate.toISOString().slice(0, 10);
 }
 
-function extractDate(text: string, timezone: string): Pick<RoutedEntities, 'date' | 'startDate' | 'endDate' | 'invalidDate'> {
-  const today = dateInTimezone(timezone);
+function extractDate(text: string, timezone: string, referenceTime?: string): Pick<RoutedEntities, 'date' | 'startDate' | 'endDate' | 'invalidDate'> {
+  const today = dateInTimezone(timezone, referenceTime);
   const year = today.getUTCFullYear();
 
   const isoMatch = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
@@ -537,7 +544,7 @@ export class LocalIntentRouter {
   route(userText: string, context?: AIProviderContext): StructuredIntentRoute {
     const text = normalizeNaturalLanguage(userText);
     const timezone = context?.organization.timezone || 'Europe/Rome';
-    const dateEntity = extractDate(text, timezone);
+    const dateEntity = extractDate(text, timezone, context?.referenceTime);
     const timeEntity = extractTime(text);
     const catalogServices = context?.services || [];
     // Catalog labels used to guard the identity fallback: a standalone

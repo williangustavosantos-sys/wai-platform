@@ -1,5 +1,5 @@
 import { ConversationMessage } from '../messages/messages.types';
-import { Intent } from '../conversation/conversation.types';
+import { Intent, OperationalResult } from '../conversation/conversation.types';
 import { ToolDefinition } from '../tools/tools.types';
 import { DigitalEmployeeConfig } from '../assistant/assistant.types';
 
@@ -23,7 +23,7 @@ export interface ToolResultSummary {
 
 export interface AIProvider {
   readonly providerName: string;
-  
+
   /**
    * Interpreta o turno do usuário, detecta o Intent e decide quais WAI Tools devem ser acionadas.
    */
@@ -47,5 +47,18 @@ export interface AIProvider {
     draftReply?: string,
     history?: ConversationMessage[],
     bookingDraft?: Record<string, any>
+  ): Promise<string>;
+
+  /**
+   * Humaniza a resposta usando o modelo Gemini, respeitando a flag enable_ai_humanization.
+   * Nunca realiza decisões operacionais — apenas reescreve o texto base de forma conversacional.
+   * Sempre retorna um fallback seguro se a API não estiver disponível.
+   */
+  humanizeResponse(
+    config: DigitalEmployeeConfig | null,
+    operationalResult: OperationalResult,
+    employee: DigitalEmployeeConfig,
+    organizationSlug: string,
+    correlationId: string
   ): Promise<string>;
 }

@@ -5,7 +5,7 @@ import { AIProvider, AIProviderTurnOutput, ToolResultSummary } from './ai.types'
 import { DigitalEmployeeConfig } from '../assistant/assistant.types';
 import { ConversationMessage } from '../messages/messages.types';
 import { ToolDefinition } from '../tools/tools.types';
-import { Intent } from '../conversation/conversation.types';
+import { Intent, OperationalResult } from '../conversation/conversation.types';
 
 const openai = createOpenAI({
   apiKey: process.env.OPENAI_API_KEY || 'dummy_key',
@@ -134,6 +134,21 @@ export class LLMAIProvider implements AIProvider {
       }
       
       return "Richiesta completata.";
+  }
+
+  async humanizeResponse(
+    _config: DigitalEmployeeConfig | null,
+    operationalResult: OperationalResult,
+    _employee: DigitalEmployeeConfig,
+    _organizationSlug: string,
+    _correlationId: string,
+  ): Promise<string> {
+    void _config;
+    void _employee;
+    void _organizationSlug;
+    void _correlationId;
+    // LLMAIProvider delegates to base reply text in offline mode
+    return operationalResult.baseReplyText;
   }
 
   // Fallback heuristic engine perfectly mimicking an advanced LLM structured tool extraction

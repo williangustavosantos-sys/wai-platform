@@ -1,3 +1,5 @@
+import { ConversationWorkflowState } from '../conversation/conversation.types';
+
 export type ConversationChannel = 'webchat' | 'whatsapp' | 'instagram' | 'sms';
 export type ConversationStatus = 'active' | 'waiting_customer' | 'human_handoff' | 'closed';
 export type MessageRole = 'customer' | 'assistant' | 'system';
@@ -8,6 +10,7 @@ export interface Conversation {
   customerId: string | null;
   channel: ConversationChannel;
   status: ConversationStatus;
+  workflowState?: ConversationWorkflowState | null;
   createdAt: string;
   updatedAt: string;
 }

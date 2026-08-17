@@ -26,9 +26,14 @@ const responses = new DeterministicResponseGenerator();
 function startBooking(message: string, language: CustomerLanguage) {
   const route = router.route(message, baseContext);
   const calls = router.convertToToolCalls(route, baseContext.organization.timezone);
+  // When no service is resolved, the booking flow asks for it (SERVICE step);
+  // otherwise the check tool asks for a date first.
+  const outcome = route.entities.service
+    ? { toolName: 'checkAvailability', success: false, code: 'DATE_REQUIRED' }
+    : { toolName: 'checkAvailability', success: true, code: 'SERVICE_SELECTION_REQUIRED', result: { requiresServiceSelection: true } };
   const reply = responses.generateReply(
     route.intent,
-    [{ toolName: 'checkAvailability', success: false, code: 'DATE_REQUIRED' }],
+    [outcome],
     route.entities,
     message,
     baseContext.organization.timezone,
@@ -62,8 +67,10 @@ describe('P1 human acceptance regressions — multilingual Chiara booking', () =
 
     expect(language).toBe('en');
     expect(route.intent).toBe('CHECK_AVAILABILITY');
-    expect(route.entities.service).toMatchObject({ id: 'service-tax' });
-    expect(reply).toContain('What date do you prefer?');
+    // "consultation" is a generic booking word (like "visita"): with multiple
+    // services available the service is NOT auto-resolved — the flow must ask.
+    expect(route.entities.service).toBeUndefined();
+    expect(reply).toContain('Which service would you like to book?');
   });
 
   it('3. starts a Portuguese booking request in Portuguese', () => {
@@ -73,8 +80,10 @@ describe('P1 human acceptance regressions — multilingual Chiara booking', () =
 
     expect(language).toBe('pt');
     expect(route.intent).toBe('CHECK_AVAILABILITY');
-    expect(route.entities.service).toMatchObject({ id: 'service-tax' });
-    expect(reply).toContain('Qual data você prefere?');
+    // Same product rule as the English case: a generic "consulta" must not
+    // auto-resolve a service when the catalog has several options.
+    expect(route.entities.service).toBeUndefined();
+    expect(reply).toContain('Qual serviço você gostaria de agendar?');
   });
 
   it('4. follows the customer when they change language during the booking conversation', () => {
